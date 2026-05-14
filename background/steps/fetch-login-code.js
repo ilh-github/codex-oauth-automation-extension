@@ -556,6 +556,11 @@
       return /STEP8_RESTART_STEP7::/i.test(message);
     }
 
+    function isStep8RetryableAuthTransportError(error) {
+      const message = String(error?.message || error || '').trim();
+      return /A listener indicated an asynchronous response by returning true, but the message channel closed before a response was received|did not respond in \d+s|Receiving end does not exist|message channel closed|port closed before a response was received/i.test(message);
+    }
+
     async function executeStep8(state) {
       let currentState = state;
       let mailPollingAttempt = 1;
@@ -633,7 +638,19 @@
               currentError = recovery.error;
             }
           }
-          if (!isVerificationMailPollingError(currentError) && !isStep8RestartStep7Error(currentError) && !isLuckmailTokenMissingError(currentError)) {
+          if (isStep8RetryableAuthTransportError(currentError)) {
+            const recovery = await recoverStep8PollingFailure(currentState, visibleStep);
+            if (recovery?.outcome === 'completed') {
+              return;
+            }
+            if (recovery?.outcome === 'retry_without_step7') {
+              retryWithoutStep7 = true;
+            }
+            if (recovery?.error) {
+              currentError = recovery.error;
+            }
+          }
+          if (!isVerificationMailPollingError(currentError) && !isStep8RestartStep7Error(currentError) && !isLuckmailTokenMissingError(currentError) && !isStep8RetryableAuthTransportError(currentError)) {
             throw currentError;
           }
 
