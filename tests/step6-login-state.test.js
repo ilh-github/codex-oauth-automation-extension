@@ -51,6 +51,14 @@ function extractFunction(name) {
 }
 
 const bundle = [
+  extractFunction('normalizeActionText'),
+  extractFunction('extractAccountIdentifierFromText'),
+  extractFunction('findOAuthVisibleActionCandidates'),
+  extractFunction('getOAuthTargetAccount'),
+  extractFunction('isPhoneAccountIdentifierMatch'),
+  extractFunction('findOAuthMatchingAccountTrigger'),
+  extractFunction('findOAuthOtherAccountTrigger'),
+  extractFunction('getOAuthConsentAccountIdentifier'),
   extractFunction('getPageTextSnapshot'),
   extractFunction('getLoginVerificationDisplayedEmail'),
   extractFunction('getPhoneVerificationDisplayedPhone'),
@@ -73,6 +81,9 @@ const document = {
   },
   querySelector() {
     return null;
+  },
+  querySelectorAll() {
+    return [];
   },
 };
 
@@ -130,6 +141,14 @@ function isAddEmailPageReady() {
 
 function isVisibleElement() {
   return true;
+}
+
+function isActionEnabled() {
+  return true;
+}
+
+function normalizePhoneDigits(value) {
+  return String(value || '').replace(/\\D+/g, '');
 }
 
 function isStep8Ready() {

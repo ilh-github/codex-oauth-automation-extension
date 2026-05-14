@@ -159,6 +159,7 @@ const LOGIN_ENTRY_ACTION_PATTERN = /(?:^|\b)(?:log\s*in|sign\s*in|continue\s+(?:
 const LOGIN_SWITCH_TO_PHONE_PATTERN = /继续使用(?:手机|手机号|电话)(?:号码)?登录|改用(?:手机|手机号|电话)(?:号码)?登录|手机号登录|continue\s+(?:with|using)\s+(?:a\s+)?phone(?:\s+number)?|use\s+(?:a\s+)?phone(?:\s+number)?(?:\s+instead)?|sign\s*in\s+with\s+(?:a\s+)?phone/i;
 const LOGIN_PHONE_ACTION_PATTERN = /手机|电话|phone|telephone/i;
 const LOGIN_PHONE_ENTRY_PAGE_PATTERN = /(?:\+\s*\(?\d{1,4}\)?\s*)?(?:手机号码|手机号|电话号码)|(?:phone|mobile)\s+number|telephone/i;
+const OAUTH_OTHER_ACCOUNT_ACTION_PATTERN = /其他账号|其他帐户|其他账户|使用其他账号|使用其他帐户|使用其他账户|换个账号|切换账号|other\s+account|another\s+account|use\s+another\s+account|use\s+a\s+different\s+account|switch\s+account|choose\s+another\s+account|not\s+you/i;
 const LOGIN_MORE_OPTIONS_PATTERN = /更多(?:选项|登录方式|方式)|其他(?:登录方式|选项|方式)|显示更多|more\s+(?:login\s+|sign[-\s]*in\s+)?options|other\s+(?:login\s+|sign[-\s]*in\s+)?(?:options|ways)|show\s+more/i;
 const LOGIN_EXTERNAL_IDP_PATTERN = /google|microsoft|apple|sso|single\s+sign[-\s]*on|企业|工作区|workspace/i;
 const LOGIN_CODE_ONLY_ACTION_PATTERN = /one[-\s]*time|passcode|use\s+(?:a\s+)?code|验证码|一次性/i;
@@ -4122,6 +4123,132 @@ function findLoginMoreOptionsTrigger() {
   }) || null;
 }
 
+function extractAccountIdentifierFromText(text = '') {
+  const normalized = normalizeActionText(text);
+  if (!normalized) {
+    return null;
+  }
+
+  const emailMatches = normalized.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/ig) || [];
+  if (emailMatches[0]) {
+    const email = String(emailMatches[0]).trim().toLowerCase();
+    return {
+      type: 'email',
+      value: email,
+      display: email,
+    };
+  }
+
+  const phoneMatches = normalized.match(/\+?\d[\d\s().-]{6,}\d/g) || [];
+  if (phoneMatches[0]) {
+    const display = String(phoneMatches[0]).replace(/\s+/g, ' ').trim();
+    const digits = normalizePhoneDigits(display);
+    if (digits.length >= 8) {
+      return {
+        type: 'phone',
+        value: digits,
+        display,
+      };
+    }
+  }
+
+  return null;
+}
+
+function findOAuthVisibleActionCandidates() {
+  return Array.from(document.querySelectorAll(
+    'button, a, [role="button"], [role="link"], input[type="button"], input[type="submit"]'
+  )).filter((el) => isVisibleElement(el) && isActionEnabled(el));
+}
+
+function getOAuthTargetAccount(payload = {}) {
+  const loginIdentifierType = String(payload?.loginIdentifierType || '').trim() === 'phone'
+    || (!String(payload?.email || '').trim() && String(payload?.phoneNumber || payload?.accountIdentifier || '').trim())
+      ? 'phone'
+      : 'email';
+
+  if (loginIdentifierType === 'phone') {
+    const display = String(payload?.phoneNumber || payload?.accountIdentifier || '').trim();
+    const digits = normalizePhoneDigits(display);
+    if (!digits) {
+      return null;
+    }
+    return {
+      type: 'phone',
+      value: digits,
+      display: display || digits,
+    };
+  }
+
+  const email = String(payload?.email || payload?.accountIdentifier || '').trim().toLowerCase();
+  if (!email) {
+    return null;
+  }
+  return {
+    type: 'email',
+    value: email,
+    display: email,
+  };
+}
+
+function isPhoneAccountIdentifierMatch(left = '', right = '') {
+  const normalizedLeft = normalizePhoneDigits(left);
+  const normalizedRight = normalizePhoneDigits(right);
+  if (!normalizedLeft || !normalizedRight) {
+    return false;
+  }
+
+  return normalizedLeft === normalizedRight
+    || normalizedLeft.endsWith(normalizedRight)
+    || normalizedRight.endsWith(normalizedLeft);
+}
+
+function findOAuthMatchingAccountTrigger(payload = {}) {
+  const target = getOAuthTargetAccount(payload);
+  if (!target) {
+    return null;
+  }
+
+  const candidates = findOAuthVisibleActionCandidates();
+  for (const el of candidates) {
+    const identifier = extractAccountIdentifierFromText(getActionText(el));
+    if (!identifier) {
+      continue;
+    }
+
+    if (target.type === 'email' && identifier.type === 'email' && identifier.value === target.value) {
+      return { element: el, identifier };
+    }
+    if (target.type === 'phone' && identifier.type === 'phone' && isPhoneAccountIdentifierMatch(identifier.value, target.value)) {
+      return { element: el, identifier };
+    }
+  }
+
+  return null;
+}
+
+function findOAuthOtherAccountTrigger() {
+  const candidates = findOAuthVisibleActionCandidates();
+  return candidates.find((el) => OAUTH_OTHER_ACCOUNT_ACTION_PATTERN.test(normalizeActionText(getActionText(el)))) || null;
+}
+
+function getOAuthConsentAccountIdentifier(snapshot = null) {
+  const isConsent = Boolean(snapshot?.oauthConsentPage || snapshot?.consentReady || isOAuthConsentPage());
+  if (!isConsent) {
+    return null;
+  }
+
+  const candidates = findOAuthVisibleActionCandidates();
+  for (const el of candidates) {
+    const identifier = extractAccountIdentifierFromText(getActionText(el));
+    if (identifier) {
+      return identifier;
+    }
+  }
+
+  return extractAccountIdentifierFromText(getPageTextSnapshot());
+}
+
 function inspectLoginAuthState() {
   const retryState = getLoginTimeoutErrorPageState();
   const verificationTarget = getVerificationCodeTarget();
@@ -4139,6 +4266,17 @@ function inspectLoginAuthState() {
   const phoneVerificationPage = isPhoneVerificationPageReady();
   const consentReady = isStep8Ready();
   const oauthConsentPage = isOAuthConsentPage();
+  const oauthConsentAccountIdentifier = (oauthConsentPage || consentReady)
+    ? getOAuthConsentAccountIdentifier()
+    : null;
+  const oauthOtherAccountTrigger = (oauthConsentPage || consentReady)
+    ? findOAuthOtherAccountTrigger()
+    : null;
+  const oauthMatchingAccountTrigger = (oauthConsentPage || consentReady)
+    ? findOAuthMatchingAccountTrigger({
+      email: getLoginVerificationDisplayedEmail(),
+    })
+    : null;
   const baseState = {
     state: 'unknown',
     url: location.href,
@@ -4165,6 +4303,11 @@ function inspectLoginAuthState() {
     phoneVerificationPage,
     oauthConsentPage,
     consentReady,
+    consentAccountIdentifier: oauthConsentAccountIdentifier?.display || '',
+    consentAccountIdentifierType: oauthConsentAccountIdentifier?.type || '',
+    consentAccountIdentifierNormalized: oauthConsentAccountIdentifier?.value || '',
+    otherAccountTrigger: oauthOtherAccountTrigger || null,
+    matchingAccountTrigger: oauthMatchingAccountTrigger?.element || null,
   };
 
   if (retryState) {
@@ -4238,6 +4381,30 @@ function inspectLoginAuthState() {
     };
   }
 
+  if (!passwordInput && !emailInput && !phoneInput && !verificationTarget && !addPhonePage && !addEmailPage) {
+    const accountChoice = findOAuthMatchingAccountTrigger({ email: '', phoneNumber: '' })
+      || (() => {
+        const candidates = findOAuthVisibleActionCandidates();
+        for (const el of candidates) {
+          const identifier = extractAccountIdentifierFromText(getActionText(el));
+          if (identifier) {
+            return { element: el, identifier };
+          }
+        }
+        return null;
+      })();
+    if (accountChoice || oauthOtherAccountTrigger) {
+      return {
+        ...baseState,
+        state: 'account_chooser_page',
+        consentAccountIdentifier: accountChoice?.identifier?.display || baseState.consentAccountIdentifier,
+        consentAccountIdentifierType: accountChoice?.identifier?.type || baseState.consentAccountIdentifierType,
+        consentAccountIdentifierNormalized: accountChoice?.identifier?.value || baseState.consentAccountIdentifierNormalized,
+        matchingAccountTrigger: accountChoice?.element || null,
+      };
+    }
+  }
+
   if (loginEntryTrigger) {
     return {
       ...baseState,
@@ -4275,6 +4442,11 @@ function serializeLoginAuthState(snapshot) {
     phoneVerificationPage: Boolean(snapshot?.phoneVerificationPage),
     oauthConsentPage: Boolean(snapshot?.oauthConsentPage),
     consentReady: Boolean(snapshot?.consentReady),
+    consentAccountIdentifier: snapshot?.consentAccountIdentifier || '',
+    consentAccountIdentifierType: snapshot?.consentAccountIdentifierType || '',
+    consentAccountIdentifierNormalized: snapshot?.consentAccountIdentifierNormalized || '',
+    hasOtherAccountTrigger: Boolean(snapshot?.otherAccountTrigger),
+    hasMatchingAccountTrigger: Boolean(snapshot?.matchingAccountTrigger),
   };
 }
 
@@ -4295,6 +4467,8 @@ function getLoginAuthStateLabel(snapshot) {
       return '登录超时报错页';
     case 'oauth_consent_page':
       return 'OAuth 授权页';
+    case 'account_chooser_page':
+      return '账号选择页';
     case 'entry_page':
       return '登录入口页';
     case 'add_phone_page':
@@ -4386,6 +4560,151 @@ function createStep6AddEmailSuccessResult(snapshot, options = {}) {
     }),
     addEmailPage: true,
   };
+}
+
+function inspectStep6ExistingSessionMatch(payload = {}, snapshot = null) {
+  const target = getOAuthTargetAccount(payload);
+  if (!target) {
+    return { known: false, matched: true, target: null, current: null };
+  }
+
+  const current = snapshot?.consentAccountIdentifierNormalized
+    ? {
+      type: String(snapshot?.consentAccountIdentifierType || '').trim() || (String(snapshot?.consentAccountIdentifier || '').includes('@') ? 'email' : 'phone'),
+      value: String(snapshot?.consentAccountIdentifierNormalized || '').trim().toLowerCase(),
+      display: String(snapshot?.consentAccountIdentifier || '').trim(),
+    }
+    : getOAuthConsentAccountIdentifier(snapshot);
+
+  if (!current?.value) {
+    return { known: false, matched: true, target, current: null };
+  }
+
+  const matched = target.type === 'email'
+    ? current.type === 'email' && current.value === target.value
+    : current.type === 'phone' && isPhoneAccountIdentifierMatch(current.value, target.value);
+
+  return {
+    known: true,
+    matched,
+    target,
+    current,
+  };
+}
+
+async function clickStep6ExistingSessionTrigger(trigger, label, visibleStep = 7) {
+  const performOperationWithDelay = typeof getOperationDelayRunner === 'function'
+    ? getOperationDelayRunner()
+    : async (_metadata, operation) => operation();
+
+  await humanPause(250, 700);
+  await performOperationWithDelay({ stepKey: 'oauth-login', kind: 'click', label }, async () => {
+    simulateClick(trigger);
+  });
+  log(`步骤 ${visibleStep}：已点击${label === 'oauth-other-account' ? '“其他账号”' : '已登录账号'}入口。`, 'info', { step: visibleStep, stepKey: 'oauth-login' });
+  await sleep(500);
+}
+
+async function resolveStep6ExistingSessionChoice(payload = {}, snapshot = null, visibleStep = 7) {
+  const normalizedSnapshot = normalizeStep6Snapshot(snapshot || inspectLoginAuthState());
+
+  if (normalizedSnapshot.state === 'account_chooser_page') {
+    const matchingChoice = findOAuthMatchingAccountTrigger(payload);
+    if (matchingChoice?.element) {
+      await clickStep6ExistingSessionTrigger(matchingChoice.element, 'oauth-existing-account', visibleStep);
+      const nextSnapshot = normalizeStep6Snapshot(await waitForKnownLoginAuthState(10000));
+      if (nextSnapshot.state === 'oauth_consent_page') {
+        return createStep6OAuthConsentSuccessResult(nextSnapshot, {
+          via: 'account_chooser_selected_oauth_consent_page',
+        });
+      }
+      if (nextSnapshot.state === 'verification_page' || nextSnapshot.state === 'phone_verification_page') {
+        return finalizeStep6VerificationReady({
+          visibleStep,
+          loginVerificationRequestedAt: null,
+          via: 'account_chooser_selected_verification_page',
+          allowPhoneVerificationPage: nextSnapshot.state === 'phone_verification_page',
+        });
+      }
+      if (nextSnapshot.state === 'password_page') {
+        return step6LoginFromPasswordPage(payload, nextSnapshot);
+      }
+      if (nextSnapshot.state === 'email_page') {
+        return step6LoginFromEmailPage(payload, nextSnapshot);
+      }
+      if (nextSnapshot.state === 'phone_entry_page') {
+        return step6LoginFromPhonePage(payload, nextSnapshot);
+      }
+    }
+
+    const otherAccountTrigger = normalizedSnapshot.otherAccountTrigger || findOAuthOtherAccountTrigger();
+    if (otherAccountTrigger) {
+      await clickStep6ExistingSessionTrigger(otherAccountTrigger, 'oauth-other-account', visibleStep);
+      const nextSnapshot = normalizeStep6Snapshot(await waitForKnownLoginAuthState(10000));
+      if (nextSnapshot.state === 'entry_page') {
+        return step6OpenLoginEntry(payload, nextSnapshot);
+      }
+      if (nextSnapshot.state === 'email_page') {
+        return step6LoginFromEmailPage(payload, nextSnapshot);
+      }
+      if (nextSnapshot.state === 'phone_entry_page') {
+        return step6LoginFromPhonePage(payload, nextSnapshot);
+      }
+      if (nextSnapshot.state === 'password_page') {
+        return step6LoginFromPasswordPage(payload, nextSnapshot);
+      }
+      return createStep6RecoverableResult('account_chooser_switch_unknown', nextSnapshot, {
+        message: `点击“其他账号”后未进入可识别的登录页面，当前状态：${getLoginAuthStateLabel(nextSnapshot)}。`,
+      });
+    }
+
+    return createStep6RecoverableResult('account_chooser_no_route', normalizedSnapshot, {
+      message: '账号选择页未找到匹配账号，也未找到“其他账号”入口。',
+    });
+  }
+
+  if (normalizedSnapshot.state === 'oauth_consent_page') {
+    const sessionMatch = inspectStep6ExistingSessionMatch(payload, normalizedSnapshot);
+    if (!sessionMatch.known || sessionMatch.matched) {
+      if (sessionMatch.known) {
+        log('认证页已直接进入 OAuth 授权页，当前已登录账号与目标账号一致，跳过登录验证码步骤。', 'ok', { step: visibleStep, stepKey: 'oauth-login' });
+      } else {
+        log('认证页已直接进入 OAuth 授权页，未识别到当前账号标识，沿用当前会话继续授权。', 'ok', { step: visibleStep, stepKey: 'oauth-login' });
+      }
+      return createStep6OAuthConsentSuccessResult(normalizedSnapshot, {
+        via: 'already_on_oauth_consent_page',
+      });
+    }
+
+    const otherAccountTrigger = normalizedSnapshot.otherAccountTrigger || findOAuthOtherAccountTrigger();
+    if (!otherAccountTrigger) {
+      return createStep6RecoverableResult('oauth_consent_account_mismatch', normalizedSnapshot, {
+        message: `OAuth 授权页当前账号 ${sessionMatch.current.display} 与目标${sessionMatch.target.type === 'phone' ? '手机号' : '邮箱'} ${sessionMatch.target.display} 不一致，且未找到“其他账号”入口。`,
+      });
+    }
+
+    log(`OAuth 授权页当前账号 ${sessionMatch.current.display} 与目标${sessionMatch.target.type === 'phone' ? '手机号' : '邮箱'} ${sessionMatch.target.display} 不一致，正在切换到其他账号...`, 'warn', { step: visibleStep, stepKey: 'oauth-login' });
+    await clickStep6ExistingSessionTrigger(otherAccountTrigger, 'oauth-other-account', visibleStep);
+    const nextSnapshot = normalizeStep6Snapshot(await waitForKnownLoginAuthState(10000));
+    if (nextSnapshot.state === 'entry_page') {
+      return step6OpenLoginEntry(payload, nextSnapshot);
+    }
+    if (nextSnapshot.state === 'email_page') {
+      return step6LoginFromEmailPage(payload, nextSnapshot);
+    }
+    if (nextSnapshot.state === 'phone_entry_page') {
+      return step6LoginFromPhonePage(payload, nextSnapshot);
+    }
+    if (nextSnapshot.state === 'password_page') {
+      return step6LoginFromPasswordPage(payload, nextSnapshot);
+    }
+
+    return createStep6RecoverableResult('oauth_consent_switch_unknown', nextSnapshot, {
+      message: `OAuth 授权页切换账号后未进入可识别的登录页面，当前状态：${getLoginAuthStateLabel(nextSnapshot)}。`,
+    });
+  }
+
+  return null;
 }
 
 function createStep6RecoverableResult(reason, snapshot, options = {}) {
@@ -6009,10 +6328,11 @@ async function step6_login(payload) {
   }
 
   if (snapshot.state === 'oauth_consent_page') {
-    log('认证页已直接进入 OAuth 授权页，跳过登录验证码步骤。', 'ok', { step: visibleStep, stepKey: 'oauth-login' });
-    return createStep6OAuthConsentSuccessResult(snapshot, {
-      via: 'already_on_oauth_consent_page',
-    });
+    return resolveStep6ExistingSessionChoice(payload, snapshot, visibleStep);
+  }
+
+  if (snapshot.state === 'account_chooser_page') {
+    return resolveStep6ExistingSessionChoice(payload, snapshot, visibleStep);
   }
 
   if (snapshot.state === 'add_email_page') {
