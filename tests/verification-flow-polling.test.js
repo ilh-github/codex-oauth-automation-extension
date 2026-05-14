@@ -742,6 +742,67 @@ test('verification flow caps mail polling timeout to the remaining oauth budget'
   assert.equal(mailPollCalls[0].payload.maxAttempts, 2);
 });
 
+test('verification flow gives step 8 post-submit fallback extra auth-page settle budget', async () => {
+  const fallbackCalls = [];
+
+  const helpers = api.createVerificationFlowHelpers({
+    addLog: async () => {},
+    chrome: {
+      tabs: {
+        update: async () => {},
+      },
+    },
+    CLOUDFLARE_TEMP_EMAIL_PROVIDER: 'cloudflare-temp-email',
+    completeStepFromBackground: async () => {},
+    confirmCustomVerificationStepBypassRequest: async () => ({ confirmed: true }),
+    getHotmailVerificationPollConfig: () => ({}),
+    getHotmailVerificationRequestTimestamp: () => 0,
+    getState: async () => ({}),
+    getTabId: async () => 1,
+    HOTMAIL_PROVIDER: 'hotmail-api',
+    isStopError: () => false,
+    LUCKMAIL_PROVIDER: 'luckmail-api',
+    MAIL_2925_VERIFICATION_INTERVAL_MS: 15000,
+    MAIL_2925_VERIFICATION_MAX_ATTEMPTS: 15,
+    pollCloudflareTempEmailVerificationCode: async () => ({}),
+    pollHotmailVerificationCode: async () => ({}),
+    pollLuckmailVerificationCode: async () => ({}),
+    sendToContentScript: async (_source, message) => {
+      if (message.type === 'FILL_CODE') {
+        throw new Error('message channel is closed before a response was received');
+      }
+      return {};
+    },
+    sendToContentScriptResilient: async (_source, message) => {
+      if (message.type === 'GET_LOGIN_AUTH_STATE') {
+        return {
+          state: 'oauth_consent_page',
+          url: 'https://auth.openai.com/authorize?client_id=test',
+        };
+      }
+      return {};
+    },
+    sendToMailContentScriptResilient: async () => ({
+      code: '654321',
+      emailTimestamp: 123,
+    }),
+    setState: async () => {},
+    setStepStatus: async () => {},
+    sleepWithStop: async () => {},
+    throwIfStopped: () => {},
+    VERIFICATION_POLL_MAX_ROUNDS: 5,
+  });
+
+  await helpers.resolveVerificationStep(
+    8,
+    { email: 'user@example.com', lastLoginCode: null },
+    { provider: 'qq', label: 'QQ 邮箱' },
+    {}
+  );
+
+  assert.deepStrictEqual(fallbackCalls, []);
+});
+
 test('verification flow keeps mail polling response timeout above minimum floor', async () => {
   const mailPollCalls = [];
 

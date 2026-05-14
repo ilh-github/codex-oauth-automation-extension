@@ -102,6 +102,10 @@ const location = {
   href: 'https://auth.openai.com/email-verification',
 };
 
+function getCurrentAuthRetryPageState() {
+  return null;
+}
+
 function isStep5Ready() {
   return false;
 }
@@ -149,6 +153,67 @@ return {
   });
 });
 
+test('signup verification state treats login password timeout page as error for step 3 recovery', () => {
+  const api = new Function(`
+const location = {
+  href: 'https://auth.openai.com/log-in/password',
+  pathname: '/log-in/password',
+};
+
+function getCurrentAuthRetryPageState(flow) {
+  if (flow === 'login') {
+    return { retryButton: { textContent: '重试' } };
+  }
+  return null;
+}
+
+function isStep5Ready() {
+  return false;
+}
+
+function isVerificationPageStillVisible() {
+  return false;
+}
+
+function isSignupPasswordErrorPage() {
+  return false;
+}
+
+function getSignupPasswordTimeoutErrorPageState() {
+  return null;
+}
+
+function isSignupEmailAlreadyExistsPage() {
+  return false;
+}
+
+function getSignupPasswordInput() {
+  return { value: 'Secret123!' };
+}
+
+function getSignupPasswordSubmitButton() {
+  return { textContent: 'Continue' };
+}
+
+${extractFunction('isSignupProfilePageUrl')}
+${extractFunction('isLikelyLoggedInChatgptHomeUrl')}
+${extractFunction('getStep4PostVerificationState')}
+${extractFunction('inspectSignupVerificationState')}
+
+return {
+  run() {
+    return inspectSignupVerificationState();
+  },
+};
+`)();
+
+  assert.deepStrictEqual(api.run(), {
+    state: 'error',
+    retryButton: { textContent: '重试' },
+    userAlreadyExistsBlocked: false,
+  });
+});
+
 test('signup verification state treats email-verification retry page as error instead of verification', () => {
   const api = new Function(`
 const location = {
@@ -163,6 +228,10 @@ function getAuthTimeoutErrorPageState(options) {
 
 function isStep5Ready() {
   return false;
+}
+
+function getCurrentAuthRetryPageState() {
+  return null;
 }
 
 function isVerificationPageStillVisible() {
@@ -211,6 +280,10 @@ const location = {
 
 function isStep5Ready() {
   return false;
+}
+
+function getCurrentAuthRetryPageState() {
+  return null;
 }
 
 function isVerificationPageStillVisible() {
@@ -262,6 +335,10 @@ const location = {
 
 function isStep5Ready() {
   return false;
+}
+
+function getCurrentAuthRetryPageState() {
+  return null;
 }
 
 function isVerificationPageStillVisible() {
@@ -317,6 +394,10 @@ test('signup verification state keeps verification priority when email-verificat
 const location = {
   href: 'https://auth.openai.com/email-verification/register',
 };
+
+function getCurrentAuthRetryPageState() {
+  return null;
+}
 
 function isStep5Ready() {
   return true;

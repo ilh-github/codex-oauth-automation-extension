@@ -16,3 +16,4 @@ __pycache__/
 .worktrees/
 # Local exported runtime settings
 /config.json
+codex-oauth-automation-extensiontree.zip

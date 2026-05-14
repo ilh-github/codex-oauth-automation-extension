@@ -508,6 +508,14 @@
       return Math.max(PHONE_CODE_POLL_ROUNDS_MIN, Math.min(PHONE_CODE_POLL_ROUNDS_MAX, parsed));
     }
 
+    function resolveEffectivePhoneCodePollMaxRounds(waitSeconds, pollIntervalSeconds, configuredMaxRounds) {
+      const normalizedWaitSeconds = Math.max(1, Math.floor(Number(waitSeconds) || 0));
+      const normalizedPollIntervalSeconds = Math.max(1, Math.floor(Number(pollIntervalSeconds) || 0));
+      const normalizedConfiguredMaxRounds = normalizePhoneCodePollMaxRounds(configuredMaxRounds);
+      const roundsRequiredForFullWaitWindow = Math.ceil(normalizedWaitSeconds / normalizedPollIntervalSeconds);
+      return Math.max(normalizedConfiguredMaxRounds, roundsRequiredForFullWaitWindow);
+    }
+
     function normalizeHeroSmsReuseEnabled(value) {
       if (value === undefined || value === null) {
         return Boolean(DEFAULT_HERO_SMS_REUSE_ENABLED);
@@ -1509,7 +1517,7 @@
 
     function isAuthContentScriptUnreachableError(error) {
       const message = String(error?.message || error || '').trim();
-      return /Receiving end does not exist|Could not establish connection|Frame with ID \d+ is showing error page|等待认证页状态检查超时/i.test(message);
+      return /Receiving end does not exist|Could not establish connection|Frame with ID \d+ is showing error page|等待认证页状态检查超时|back\/forward cache|message channel is closed|port closed before a response was received/i.test(message);
     }
 
     function buildPhoneRestartStep7Error(phoneNumber = '') {
@@ -5037,7 +5045,11 @@
       const waitSeconds = normalizePhoneCodeWaitSeconds(state?.phoneCodeWaitSeconds);
       const timeoutWindows = normalizePhoneCodeTimeoutWindows(state?.phoneCodeTimeoutWindows);
       const pollIntervalSeconds = normalizePhoneCodePollIntervalSeconds(state?.phoneCodePollIntervalSeconds);
-      const pollMaxRounds = normalizePhoneCodePollMaxRounds(state?.phoneCodePollMaxRounds);
+      const pollMaxRounds = resolveEffectivePhoneCodePollMaxRounds(
+        waitSeconds,
+        pollIntervalSeconds,
+        state?.phoneCodePollMaxRounds
+      );
       let lastLoggedStatus = '';
       let lastLoggedPollCount = 0;
       let resendTriggeredForCurrentNumber = false;
@@ -5045,7 +5057,7 @@
       for (let windowIndex = 1; windowIndex <= timeoutWindows; windowIndex += 1) {
         await setPhoneRuntimeCountdown(normalizedActivation, waitSeconds, windowIndex, timeoutWindows);
         await addLog(
-          `步骤 9：等待号码 ${normalizedActivation.phoneNumber} 接收短信，最长 ${waitSeconds} 秒（第 ${windowIndex}/${timeoutWindows} 轮）。`,
+          `步骤 9：等待号码 ${normalizedActivation.phoneNumber} 接收短信，最长 ${waitSeconds} 秒（第 ${windowIndex}/${timeoutWindows} 轮，本窗口最多轮询 ${pollMaxRounds} 次）。`,
           'info'
         );
         try {
@@ -5313,7 +5325,11 @@
         const waitSeconds = normalizePhoneCodeWaitSeconds(state?.phoneCodeWaitSeconds);
         const timeoutWindows = normalizePhoneCodeTimeoutWindows(state?.phoneCodeTimeoutWindows);
         const pollIntervalSeconds = normalizePhoneCodePollIntervalSeconds(state?.phoneCodePollIntervalSeconds);
-        const pollMaxRounds = normalizePhoneCodePollMaxRounds(state?.phoneCodePollMaxRounds);
+        const pollMaxRounds = resolveEffectivePhoneCodePollMaxRounds(
+          waitSeconds,
+          pollIntervalSeconds,
+          state?.phoneCodePollMaxRounds
+        );
         let lastLoggedStatus = '';
         let lastLoggedPollCount = 0;
 
@@ -5328,7 +5344,7 @@
             [PHONE_RUNTIME_COUNTDOWN_WINDOW_TOTAL_KEY]: timeoutWindows,
           });
           await addLog(
-            `步骤 ${visibleStep}：正在等待 ${normalizedActivation.phoneNumber} 的短信验证码（${windowIndex}/${timeoutWindows}，最长 ${waitSeconds} 秒）。`,
+            `步骤 ${visibleStep}：正在等待 ${normalizedActivation.phoneNumber} 的短信验证码（${windowIndex}/${timeoutWindows}，最长 ${waitSeconds} 秒，本窗口最多轮询 ${pollMaxRounds} 次）。`,
             'info',
             { step: visibleStep, stepKey }
           );

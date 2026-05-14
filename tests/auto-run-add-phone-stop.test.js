@@ -332,6 +332,155 @@ test('auto-run controller treats phone-number supply exhaustion as round-fatal a
   assert.equal(runtime.state.autoRunSessionId, 0);
 });
 
+test('auto-run controller does not misclassify phone acquisition fetch failures as no-supply exhaustion', async () => {
+  const events = {
+    logs: [],
+    broadcasts: [],
+    accountRecords: [],
+    runCalls: 0,
+  };
+
+  let currentState = {
+    stepStatuses: {},
+    vpsUrl: 'https://example.com/vps',
+    vpsPassword: 'secret',
+    customPassword: '',
+    autoRunSkipFailures: false,
+    autoRunFallbackThreadIntervalMinutes: 0,
+    autoRunDelayEnabled: false,
+    autoRunDelayMinutes: 30,
+    autoStepDelaySeconds: null,
+    mailProvider: '163',
+    emailGenerator: 'duck',
+    gmailBaseEmail: '',
+    mail2925BaseEmail: '',
+    emailPrefix: 'demo',
+    inbucketHost: '',
+    inbucketMailbox: '',
+    cloudflareDomain: '',
+    cloudflareDomains: [],
+    tabRegistry: {},
+    sourceLastUrls: {},
+    autoRunRoundSummaries: [],
+  };
+
+  const runtime = {
+    state: {
+      autoRunActive: false,
+      autoRunCurrentRun: 0,
+      autoRunAttemptRun: 0,
+      autoRunTotalRuns: 0,
+      autoRunSessionId: 0,
+    },
+    set(updates = {}) {
+      this.state = { ...this.state, ...updates };
+    },
+    get() {
+      return { ...this.state };
+    },
+  };
+  let sessionSeed = 0;
+
+  const controller = api.createAutoRunController({
+    AUTO_RUN_MAX_RETRIES_PER_ROUND: 2,
+    AUTO_RUN_RETRY_DELAY_MS: 1000,
+    AUTO_RUN_TIMER_KIND_BEFORE_RETRY: 'before_retry',
+    AUTO_RUN_TIMER_KIND_BETWEEN_ROUNDS: 'between_rounds',
+    addLog: async (message, level = 'info') => {
+      events.logs.push({ message, level });
+    },
+    appendAccountRunRecord: async (status, state, reason) => {
+      events.accountRecords.push({ status, state, reason });
+      return { status, reason };
+    },
+    broadcastAutoRunStatus: async (phase, payload = {}) => {
+      events.broadcasts.push({ phase, payload });
+    },
+    broadcastStopToContentScripts: async () => {},
+    cancelPendingCommands: () => {},
+    clearAutoRunTimerAlarm: async () => {},
+    clearStopRequest: () => {},
+    createAutoRunSessionId: () => {
+      sessionSeed += 1;
+      return sessionSeed;
+    },
+    ensureHotmailMailboxReadyForAutoRunRound: async () => {},
+    formatAutoRunFailureReasons: null,
+    getAutoRunStatusPayload: (phase, payload = {}) => ({
+      autoRunning: ['scheduled', 'running', 'waiting_step', 'waiting_email', 'retrying', 'waiting_interval'].includes(phase),
+      autoRunPhase: phase,
+      autoRunCurrentRun: payload.currentRun ?? 0,
+      autoRunTotalRuns: payload.totalRuns ?? 1,
+      autoRunAttemptRun: payload.attemptRun ?? 0,
+      autoRunSessionId: payload.sessionId ?? 0,
+    }),
+    getErrorMessage: (error) => error?.message || String(error || ''),
+    getFirstUnfinishedStep: () => 1,
+    getPendingAutoRunTimerPlan: () => null,
+    getRunningSteps: () => [],
+    getState: async () => ({
+      ...currentState,
+      stepStatuses: { ...(currentState.stepStatuses || {}) },
+      tabRegistry: { ...(currentState.tabRegistry || {}) },
+      sourceLastUrls: { ...(currentState.sourceLastUrls || {}) },
+    }),
+    getStopRequested: () => false,
+    hasSavedProgress: () => false,
+    isAddPhoneAuthFailure: () => false,
+    isRestartCurrentAttemptError: () => false,
+    isStopError: (error) => (error?.message || String(error || '')) === '流程已被用户停止。',
+    launchAutoRunTimerPlan: async () => false,
+    normalizeAutoRunFallbackThreadIntervalMinutes: (value) => Math.max(0, Math.floor(Number(value) || 0)),
+    persistAutoRunTimerPlan: async () => ({}),
+    resetState: async () => {
+      currentState = {
+        ...currentState,
+        stepStatuses: {},
+        tabRegistry: {},
+        sourceLastUrls: {},
+      };
+    },
+    runAutoSequenceFromStep: async () => {
+      events.runCalls += 1;
+      throw new Error('Step 2: all provider candidates failed to acquire number. hero-sms: Failed to fetch');
+    },
+    runtime,
+    setState: async (updates = {}) => {
+      currentState = {
+        ...currentState,
+        ...updates,
+        stepStatuses: updates.stepStatuses ? { ...updates.stepStatuses } : currentState.stepStatuses,
+        tabRegistry: updates.tabRegistry ? { ...updates.tabRegistry } : currentState.tabRegistry,
+        sourceLastUrls: updates.sourceLastUrls ? { ...updates.sourceLastUrls } : currentState.sourceLastUrls,
+      };
+    },
+    sleepWithStop: async () => {},
+    throwIfAutoRunSessionStopped: (sessionId) => {
+      if (sessionId && sessionId !== runtime.state.autoRunSessionId) {
+        throw new Error('流程已被用户停止。');
+      }
+    },
+    waitForRunningStepsToFinish: async () => currentState,
+    chrome: {
+      runtime: {
+        sendMessage() {
+          return Promise.resolve();
+        },
+      },
+    },
+  });
+
+  await controller.autoRunLoop(1, {
+    autoRunSkipFailures: false,
+    mode: 'restart',
+  });
+
+  assert.equal(events.runCalls, 1);
+  assert.equal(events.logs.some(({ message }) => /接码号池暂无可用号码/.test(message)), false);
+  assert.equal(events.logs.some(({ message }) => /自动重试未开启，自动运行将在当前失败后停止/.test(message)), true);
+  assert.match(events.accountRecords[0].reason, /Failed to fetch/);
+});
+
 test('auto-run controller treats ended GPC task as round-fatal and skips same-round retries', async () => {
   const events = {
     logs: [],

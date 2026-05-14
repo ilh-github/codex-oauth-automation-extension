@@ -19,7 +19,7 @@ test('step 3 reuses existing generated password when rerunning the same email fl
     generatePassword: () => 'Generated-Should-Not-Be-Used',
     getTabId: async () => 88,
     isTabAlive: async () => true,
-    sendToContentScript: async (_source, message) => {
+    sendToContentScriptResilient: async (_source, message) => {
       events.messages.push(message);
     },
     setPasswordState: async (password) => {
@@ -70,7 +70,7 @@ test('step 3 supports phone-only signup identity when password page is present',
     generatePassword: () => 'Generated123!',
     getTabId: async () => 88,
     isTabAlive: async () => true,
-    sendToContentScript: async (_source, message) => {
+    sendToContentScriptResilient: async (_source, message) => {
       events.messages.push(message);
     },
     setPasswordState: async (password) => {
@@ -138,7 +138,7 @@ test('step 3 phone signup intent does not fall back to a stale email identity', 
     getTabId: async () => 88,
     isTabAlive: async () => true,
     resolveSignupMethod: () => 'phone',
-    sendToContentScript: async (_source, message) => {
+    sendToContentScriptResilient: async (_source, message) => {
       events.messages.push(message);
     },
     setPasswordState: async (password) => {
@@ -181,7 +181,7 @@ test('step 3 respects resolved email fallback when phone signup is unavailable',
     getTabId: async () => 88,
     isTabAlive: async () => true,
     resolveSignupMethod: () => 'email',
-    sendToContentScript: async (_source, message) => {
+    sendToContentScriptResilient: async (_source, message) => {
       events.messages.push(message);
     },
     setPasswordState: async () => {},

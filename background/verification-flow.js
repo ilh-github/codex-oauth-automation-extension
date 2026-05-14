@@ -1093,7 +1093,7 @@
       if (typeof sendToContentScriptResilient === 'function' && !shouldAvoidReplaySubmit) {
         try {
           result = await sendToContentScriptResilient('signup-page', message, {
-            timeoutMs: Math.max(baseResponseTimeoutMs + 15000, 30000),
+            timeoutMs: Math.max(baseResponseTimeoutMs + 30000, 45000),
             retryDelayMs: 700,
             responseTimeoutMs: baseResponseTimeoutMs,
             logMessage: '认证页正在切换，等待页面重新就绪后继续确认验证码提交结果...',
@@ -1123,7 +1123,7 @@
           if (step === 8 && isRetryableVerificationTransportError(err)) {
             const fallback = await detectStep8PostSubmitFallback({
               step,
-              timeoutMs: 9000,
+              timeoutMs: 15000,
               pollIntervalMs: 300,
             });
             if (fallback.success) {
@@ -1166,7 +1166,7 @@
             });
             const fallback = await detectStep8PostSubmitFallback({
               step,
-              timeoutMs: 9000,
+              timeoutMs: 15000,
               pollIntervalMs: 300,
             });
             if (fallback.invalidCode) {

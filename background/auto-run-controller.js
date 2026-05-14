@@ -199,8 +199,9 @@
       if (!message) {
         return false;
       }
+      const hasNetworkFailureSignal = /failed\s+to\s+fetch|network\s+error|networkerror|fetch\s+failed|load\s+failed|econn|enotfound|socket|tls|certificate/i.test(message);
       const hasGlobalNoSupplySignal = /Step\s*9:\s*all\s+provider\s+candidates\s+failed\s+to\s+acquire\s+number|(?:HeroSMS|5sim|NexSMS)\s+no\s+numbers\s+available\s+across|no\s+numbers\s+within\s+maxPrice|no\s+free\s+phones|numbers?\s+not\s+found/i.test(message);
-      if (!hasGlobalNoSupplySignal) {
+      if (!hasGlobalNoSupplySignal || hasNetworkFailureSignal) {
         return false;
       }
       const hasRecoverableStep9RotationSignal = /phone\s+verification\s+did\s+not\s+succeed\s+after\s+\d+\s+number\s+replacements|sms_timeout_after_|route_405_retry_loop|resend_throttled|activation_not_found|order\s+not\s+found/i.test(message);
@@ -223,6 +224,9 @@
           : (error?.message || error || '')
       ).trim();
       if (!text) {
+        return false;
+      }
+      if (/failed\s+to\s+fetch|network\s+error|networkerror|fetch\s+failed|load\s+failed|econn|enotfound|socket|tls|certificate/i.test(text)) {
         return false;
       }
       return /no\s+numbers\s+available\s+across|all provider candidates failed to acquire number|no\s+free\s+phones|numbers?\s+not\s+found|no\s+numbers\s+within\s+maxprice|countries\s+are\s+empty|均无可用号码|暂无可用号码|无可用号码|接码号池暂无|\bNO_NUMBERS\b/i.test(text);

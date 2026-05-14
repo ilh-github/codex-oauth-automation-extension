@@ -946,6 +946,63 @@ return {
   assert.equal(snapshot.targetChecks >= 1, true);
 });
 
+test('prepareSignupVerificationFlow gives step 3 finalize extra settle time before retrying password submit', async () => {
+  const waits = [];
+  const api = new Function(`
+const waits = arguments[0];
+let callCount = 0;
+const location = {
+  href: 'https://auth.openai.com/contact-verification',
+  pathname: '/contact-verification',
+};
+function throwIfStopped() {}
+function log() {}
+async function humanPause() {}
+async function sleep(ms = 0) { waits.push(ms); }
+function isActionEnabled() { return true; }
+function fillInput() {}
+function simulateClick() {}
+function createSignupUserAlreadyExistsError() { return new Error('user already exists'); }
+function createSignupPhonePasswordMismatchError(message = '') { return new Error(message || 'phone mismatch'); }
+function getCurrentAuthRetryPageState() { return null; }
+async function recoverCurrentAuthRetryPage() {}
+async function waitForDocumentLoadComplete() {}
+async function waitForVerificationCodeTarget() {}
+function logSignupPasswordDiagnostics() {}
+function getOperationDelayRunner() { return async (_metadata, operation) => operation(); }
+async function waitForSignupVerificationTransition(timeout) {
+  waits.push(timeout);
+  callCount += 1;
+  return callCount === 1
+    ? {
+      state: 'password',
+      passwordInput: { value: 'Secret123!' },
+      submitButton: { textContent: '继续' },
+      passwordErrorText: '',
+    }
+    : { state: 'verification' };
+}
+
+${extractFunction('prepareSignupVerificationFlow')}
+
+return {
+  run() {
+    return prepareSignupVerificationFlow({
+      prepareLogLabel: '步骤 3 收尾',
+      prepareSource: 'step3_finalize',
+      password: 'Secret123!',
+    }, 30000);
+  },
+};
+`)(waits);
+
+  const result = await api.run();
+
+  assert.equal(result.ready, true);
+  assert.equal(waits.includes(8000), true);
+  assert.equal(waits.includes(2000), true);
+});
+
 test('prepareSignupVerificationFlow stops immediately when password page shows phone/password mismatch', async () => {
   const api = new Function(`
 const logs = [];
@@ -1122,6 +1179,100 @@ return {
   assert.match(result.error, /SIGNUP_PHONE_PASSWORD_MISMATCH::与此电话号码相关联的帐户已存在/);
   assert.equal(result.clicks.length, 0);
   assert.equal(result.logs.some(({ message }) => /检测到密码页报错/.test(message)), true);
+});
+
+test('prepareSignupVerificationFlow recovers signup timeout retry page before failing step 3 finalize', async () => {
+  const api = new Function(`
+const recoverCalls = [];
+let retryRecovered = false;
+
+function throwIfStopped() {}
+function log() {}
+async function sleep() {}
+function isVisibleElement() { return true; }
+function isActionEnabled() { return true; }
+function getActionText(el) { return el?.textContent || ''; }
+function getCurrentAuthRetryPageState(flow) {
+  if (!retryRecovered && flow === 'login') {
+    return {
+      retryEnabled: true,
+      userAlreadyExistsBlocked: false,
+    };
+  }
+  return null;
+}
+function isPhoneVerificationPageReady() { return false; }
+function findResendVerificationCodeTrigger() { return null; }
+function isEmailVerificationPage() { return false; }
+function getPageTextSnapshot() { return ''; }
+function getVerificationCodeTarget() { return retryRecovered ? { type: 'single', element: {} } : null; }
+function is405MethodNotAllowedPage() { return false; }
+function isDocumentLoadComplete() { return true; }
+async function recoverCurrentAuthRetryPage(payload) {
+  recoverCalls.push(payload);
+  retryRecovered = true;
+}
+function createSignupUserAlreadyExistsError() { return new Error('user already exists'); }
+function getSignupPasswordInput() { return null; }
+function getSignupPasswordSubmitButton() { return null; }
+function isSignupEmailAlreadyExistsPage() { return false; }
+function isSignupPasswordErrorPage() { return false; }
+function getSignupPasswordTimeoutErrorPageState() { return null; }
+function isStep5Ready() { return false; }
+async function waitForDocumentLoadComplete() {}
+async function waitForVerificationCodeTarget() {}
+async function humanPause() {}
+function fillInput() {}
+function simulateClick() {}
+function logSignupPasswordDiagnostics() {}
+function getOperationDelayRunner() { return async (_metadata, operation) => operation(); }
+function createSignupPhonePasswordMismatchError(message = '') { return new Error(message || 'mismatch'); }
+
+const location = {
+  href: 'https://auth.openai.com/log-in/password',
+  pathname: '/log-in/password',
+};
+const document = {
+  readyState: 'complete',
+  title: '',
+  body: {
+    textContent: '',
+    innerText: '',
+  },
+  querySelector() {
+    return null;
+  },
+  querySelectorAll() {
+    return [];
+  },
+};
+
+${extractFunction('isSignupVerificationPageInteractiveReady')}
+${extractFunction('isVerificationPageStillVisible')}
+${extractFunction('isSignupProfilePageUrl')}
+${extractFunction('isLikelyLoggedInChatgptHomeUrl')}
+${extractFunction('getStep4PostVerificationState')}
+${extractFunction('inspectSignupVerificationState')}
+${extractFunction('waitForSignupVerificationTransition')}
+${extractFunction('prepareSignupVerificationFlow')}
+
+return {
+  async run() {
+    const result = await prepareSignupVerificationFlow({
+      password: 'Secret123!',
+      prepareLogLabel: '步骤 3 收尾',
+      prepareSource: 'step3_finalize',
+    }, 10000);
+    return { result, recoverCalls };
+  },
+};
+`)();
+
+  const outcome = await api.run();
+
+  assert.equal(outcome.result.ready, true);
+  assert.equal(outcome.recoverCalls.length, 1);
+  assert.equal(outcome.recoverCalls[0].flow, 'login');
 });
 
 test('fillSignupEmailAndContinue reports before deferred submit while submit still waits for operation delay', async () => {
@@ -1354,6 +1505,7 @@ const Date = { now: () => 12345 };
 const passwordInput = { value: '' };
 const submitButton = { textContent: 'Continue' };
 const location = { href: 'https://auth.openai.com/u/signup/password' };
+const STEP3_DEFERRED_SUBMIT_STATE_KEY = '__codexStep3DeferredSubmitState';
 const window = {
   setTimeout(callback, ms) {
     events.push(\`timer:\${ms}\`);
@@ -1464,4 +1616,70 @@ return {
     'log:步骤 3：表单已提交',
     'flush:resolved',
   ]);
+});
+
+test('step3_fillEmailPassword does not schedule duplicate deferred submit for the same password page payload', async () => {
+  const api = new Function(`
+const events = [];
+const reports = [];
+const scheduled = [];
+const Date = { now: () => 12345 };
+const passwordInput = { value: '' };
+const submitButton = { textContent: 'Continue' };
+const location = { href: 'https://auth.openai.com/u/signup/password' };
+const STEP3_DEFERRED_SUBMIT_STATE_KEY = '__codexStep3DeferredSubmitState';
+const window = {
+  setTimeout(callback, ms) {
+    events.push(\`timer:\${ms}\`);
+    scheduled.push(callback);
+    return scheduled.length;
+  },
+  CodexOperationDelay: {
+    async performOperationWithDelay(metadata, operation) {
+      events.push(\`operation:\${metadata.label}:start\`);
+      const result = await operation();
+      events.push(\`operation:\${metadata.label}:end\`);
+      events.push(\`delay:\${metadata.label}:2000\`);
+      return result;
+    },
+  },
+};
+
+function getOperationDelayRunner() { return window.CodexOperationDelay.performOperationWithDelay; }
+function throwIfStopped() {}
+function isStopError() { return false; }
+function log(message) { events.push(\`log:\${message}\`); }
+async function humanPause() {}
+async function sleep() {}
+function fillInput(input, value) { input.value = value; events.push(\`fill-password:\${value}\`); }
+function simulateClick(el) { events.push(\`click:\${el.textContent}\`); }
+function inspectSignupEntryState() {
+  return { state: 'password_page', passwordInput, submitButton, displayedEmail: 'ada@example.com' };
+}
+function getSignupPasswordSubmitButton() { return submitButton; }
+async function waitForElementByText() { return null; }
+function logSignupPasswordDiagnostics() {}
+function reportComplete(step, payload) {
+  reports.push({ step, payload });
+  events.push(\`report:\${payload.deferredSubmit}\`);
+}
+
+${extractFunction('step3_fillEmailPassword')}
+
+return {
+  events,
+  reports,
+  scheduledCount() { return scheduled.length; },
+  run() { return step3_fillEmailPassword({ email: 'ada@example.com', password: 'Secret123!' }); },
+};
+`)();
+
+  const first = await api.run();
+  const second = await api.run();
+
+  assert.equal(first.deferredSubmit, true);
+  assert.equal(second.deferredSubmit, true);
+  assert.equal(api.scheduledCount(), 1);
+  assert.equal(api.reports.length, 2);
+  assert.equal(api.events.includes('log:步骤 3：检测到相同密码页提交已在进行中，跳过重复提交安排。'), true);
 });

@@ -229,6 +229,20 @@ return {
 
 {
   const api = createApi({
+    pathname: '/contact-verification',
+    href: 'https://auth.openai.com/contact-verification',
+    verificationTarget: { id: 'otp' },
+    pageText: '查看你的手机 输入我们刚刚向 +55 (79) 99108-0866 发送的验证码',
+  });
+
+  assert.strictEqual(api.isPhoneVerificationPageReady(), true);
+
+  const snapshot = api.inspectLoginAuthState();
+  assert.strictEqual(snapshot.state, 'phone_verification_page');
+}
+
+{
+  const api = createApi({
     pathname: '/email-verification',
     retryState: {
       retryEnabled: true,

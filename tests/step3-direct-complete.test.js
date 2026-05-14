@@ -60,6 +60,7 @@ const scheduled = [];
 const events = [];
 let releaseSubmitDelay;
 const submitDelay = new Promise((resolve) => { releaseSubmitDelay = resolve; });
+const STEP3_DEFERRED_SUBMIT_STATE_KEY = '__codexStep3DeferredSubmitState';
 
 const snapshot = {
   state: 'password_page',

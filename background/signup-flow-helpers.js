@@ -243,6 +243,22 @@
       };
     }
 
+    async function detectCurrentSignupPostIdentityState(tabId) {
+      if (!Number.isInteger(tabId)) {
+        return { state: '', url: '' };
+      }
+      try {
+        const currentTab = await chrome.tabs.get(tabId);
+        const currentUrl = currentTab?.url || '';
+        return {
+          state: resolveSignupPostIdentityState(currentUrl),
+          url: currentUrl,
+        };
+      } catch {
+        return { state: '', url: '' };
+      }
+    }
+
     async function ensureSignupPostEmailPageReadyInTab(tabId, step = 2, options = {}) {
       return ensureSignupPostIdentityPageReadyInTab(tabId, step, options);
     }
@@ -280,16 +296,33 @@
             prepareLogLabel: '步骤 3 收尾',
           },
         }, {
-          timeoutMs: 30000,
+          timeoutMs: 90000,
+          responseTimeoutMs: 90000,
           retryDelayMs: 700,
           logMessage: `步骤 ${step}：密码已提交，正在确认是否进入下一页面，必要时自动恢复重试页...`,
         });
       } catch (error) {
         if (isRetryableContentScriptTransportError(error)) {
           try {
-            const recoveredState = await ensureSignupPostIdentityPageReadyInTab(tabId, step, {
-              skipUrlWait: false,
-            });
+            let recoveredState = await detectCurrentSignupPostIdentityState(tabId);
+            if (!recoveredState?.state) {
+              recoveredState = await ensureSignupPostIdentityPageReadyInTab(tabId, step, {
+                skipUrlWait: false,
+              });
+            } else if (recoveredState.state !== 'password_page') {
+              await ensureContentScriptReadyOnTab('signup-page', tabId, {
+                inject: SIGNUP_PAGE_INJECT_FILES,
+                injectSource: 'signup-page',
+                timeoutMs: 45000,
+                retryDelayMs: 900,
+                logMessage: `步骤 ${step}：注册后续页面仍在加载，正在等待页面恢复...`,
+              });
+              recoveredState = {
+                ready: true,
+                ...(recoveredState || {}),
+                ...(recoveredState.state === 'logged_in_home' ? { skipProfileStep: true } : {}),
+              };
+            }
             if (recoveredState?.state && recoveredState.state !== 'password_page') {
               if (typeof addLog === 'function') {
                 await addLog(

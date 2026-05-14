@@ -5,6 +5,7 @@
 console.log('[MultiPage:signup-page] Content script loaded on', location.href);
 
 const SIGNUP_PAGE_LISTENER_SENTINEL = 'data-multipage-signup-page-listener';
+const STEP3_DEFERRED_SUBMIT_STATE_KEY = '__codexStep3DeferredSubmitState';
 
 function getOperationDelayRunner() {
   const rootScope = typeof window !== 'undefined' ? window : globalThis;
@@ -2621,6 +2622,12 @@ async function step3_fillEmailPassword(payload) {
     ? 'phone'
     : 'email';
   const accountIdentifier = String(payload?.accountIdentifier || email || payload?.phoneNumber || '').trim();
+  const deferredSubmitKey = JSON.stringify({
+    accountIdentifierType,
+    accountIdentifier,
+    password,
+    url: location.href,
+  });
 
   let snapshot = inspectSignupEntryState();
   if (snapshot.state === 'entry_home') {
@@ -2705,16 +2712,48 @@ async function step3_fillEmailPassword(payload) {
   reportComplete(3, completionPayload);
 
   if (submitBtn) {
+    const rootScope = typeof window !== 'undefined' ? window : globalThis;
+    const existingDeferredSubmitState = rootScope?.[STEP3_DEFERRED_SUBMIT_STATE_KEY] || null;
+    if (existingDeferredSubmitState?.key === deferredSubmitKey && existingDeferredSubmitState?.status !== 'failed') {
+      log('步骤 3：检测到相同密码页提交已在进行中，跳过重复提交安排。', 'warn');
+      return completionPayload;
+    }
+
+    if (rootScope) {
+      rootScope[STEP3_DEFERRED_SUBMIT_STATE_KEY] = {
+        key: deferredSubmitKey,
+        status: 'scheduled',
+      };
+    }
+
     window.setTimeout(async () => {
       try {
+        if (rootScope?.[STEP3_DEFERRED_SUBMIT_STATE_KEY]?.key === deferredSubmitKey) {
+          rootScope[STEP3_DEFERRED_SUBMIT_STATE_KEY] = {
+            key: deferredSubmitKey,
+            status: 'running',
+          };
+        }
         throwIfStopped();
         await sleep(500);
         await humanPause(500, 1300);
         await performOperationWithDelay({ stepKey: 'fill-password', kind: 'submit', label: 'submit-signup-password' }, async () => {
           simulateClick(submitBtn);
         });
+        if (rootScope?.[STEP3_DEFERRED_SUBMIT_STATE_KEY]?.key === deferredSubmitKey) {
+          rootScope[STEP3_DEFERRED_SUBMIT_STATE_KEY] = {
+            key: deferredSubmitKey,
+            status: 'completed',
+          };
+        }
         log('步骤 3：表单已提交');
       } catch (error) {
+        if (rootScope?.[STEP3_DEFERRED_SUBMIT_STATE_KEY]?.key === deferredSubmitKey) {
+          rootScope[STEP3_DEFERRED_SUBMIT_STATE_KEY] = {
+            key: deferredSubmitKey,
+            status: 'failed',
+          };
+        }
         if (!isStopError(error)) {
           console.error('[MultiPage:signup-page] deferred step 3 submit failed:', error?.message || error);
         }
@@ -3111,11 +3150,11 @@ function isAddEmailPageReady() {
 
 function isPhoneVerificationPageReady() {
   const path = `${location.pathname || ''} ${location.href || ''}`;
-  if (/\/phone-verification(?:[/?#]|$)/i.test(path)) {
+  if (/\/(?:phone|contact)-verification(?:[/?#]|$)/i.test(path)) {
     return true;
   }
 
-  const form = document.querySelector('form[action*="/phone-verification" i]');
+  const form = document.querySelector('form[action*="/phone-verification" i], form[action*="/contact-verification" i]');
   if (form && isVisibleElement(form)) {
     return true;
   }
@@ -3128,7 +3167,7 @@ function isPhoneVerificationPageReady() {
   const displayedPhone = getPhoneVerificationDisplayedPhone();
   return Boolean(getVerificationCodeTarget())
     && Boolean(displayedPhone)
-    && /check\s+your\s+phone|phone\s+verification|verify\s+your\s+phone|sms|text\s+message|code\s+to\s+\+/.test(pageText);
+    && /查看你的手机|验证码|发送的验证码|check\s+your\s+phone|phone\s+verification|verify\s+your\s+phone|sms|text\s+message|code\s+to\s+\+/.test(pageText);
 }
 
 function getDocumentReadyStateSnapshot() {
@@ -4994,6 +5033,16 @@ function isSignupEmailAlreadyExistsPage() {
 }
 
 function inspectSignupVerificationState() {
+  const genericRetryState = getCurrentAuthRetryPageState('signup')
+    || getCurrentAuthRetryPageState('login');
+  if (genericRetryState) {
+    return {
+      state: 'error',
+      retryButton: genericRetryState?.retryButton || null,
+      userAlreadyExistsBlocked: Boolean(genericRetryState?.userAlreadyExistsBlocked),
+    };
+  }
+
   const postVerificationState = getStep4PostVerificationState();
   if (postVerificationState?.state === 'step5') {
     return { state: 'step5' };
@@ -5087,13 +5136,15 @@ async function prepareSignupVerificationFlow(payload = {}, timeout = 30000) {
   let recoveryRound = 0;
   const maxRecoveryRounds = 3;
   let passwordPageDiagnosticsLogged = false;
+  const perRoundWaitMs = prepareSource === 'step3_finalize' ? 8000 : 5000;
+  const passwordRetrySettleMs = prepareSource === 'step3_finalize' ? 2000 : 1200;
 
   while (Date.now() - start < timeout && recoveryRound < maxRecoveryRounds) {
     throwIfStopped();
 
     const roundNo = recoveryRound + 1;
-    log(`${prepareLogLabel}：等待页面进入验证码阶段（第 ${roundNo}/${maxRecoveryRounds} 轮，先等待 5 秒）...`, 'info');
-    const snapshot = await waitForSignupVerificationTransition(5000);
+    log(`${prepareLogLabel}：等待页面进入验证码阶段（第 ${roundNo}/${maxRecoveryRounds} 轮，先等待 ${Math.round(perRoundWaitMs / 1000)} 秒）...`, 'info');
+    const snapshot = await waitForSignupVerificationTransition(perRoundWaitMs);
 
     if (snapshot.state === 'step5') {
       log(`${prepareLogLabel}：页面已进入验证码后的下一阶段，本步骤按已完成处理。`, 'ok');
@@ -5128,9 +5179,27 @@ async function prepareSignupVerificationFlow(payload = {}, timeout = 30000) {
       if (snapshot.userAlreadyExistsBlocked) {
         throw createSignupUserAlreadyExistsError();
       }
+      const retryFlow = getCurrentAuthRetryPageState('signup')
+        ? 'signup'
+        : (getCurrentAuthRetryPageState('login') ? 'login' : 'signup');
+      await recoverCurrentAuthRetryPage({
+        flow: retryFlow,
+        logLabel: `${prepareLogLabel}：检测到注册认证重试页，正在点击“重试”恢复（第 ${recoveryRound}/${maxRecoveryRounds} 次）`,
+        step: 4,
+        timeoutMs: 12000,
+      });
+      continue;
+    }
+
+    const signupRetryState = getCurrentAuthRetryPageState('signup');
+    if (signupRetryState) {
+      if (signupRetryState.userAlreadyExistsBlocked) {
+        throw createSignupUserAlreadyExistsError();
+      }
+      recoveryRound += 1;
       await recoverCurrentAuthRetryPage({
         flow: 'signup',
-        logLabel: `${prepareLogLabel}：检测到注册认证重试页，正在点击“重试”恢复（第 ${recoveryRound}/${maxRecoveryRounds} 次）`,
+        logLabel: `${prepareLogLabel}：检测到注册认证超时/重试页，正在点击“重试”恢复（第 ${recoveryRound}/${maxRecoveryRounds} 次）`,
         step: 4,
         timeoutMs: 12000,
       });
@@ -5164,7 +5233,7 @@ async function prepareSignupVerificationFlow(payload = {}, timeout = 30000) {
         await performOperationWithDelay({ stepKey: 'fill-password', kind: 'submit', label: 'retry-submit-signup-password' }, async () => {
           simulateClick(snapshot.submitButton);
         });
-        await sleep(1200);
+        await sleep(passwordRetrySettleMs);
         continue;
       }
 

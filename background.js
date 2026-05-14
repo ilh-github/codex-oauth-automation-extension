@@ -11638,7 +11638,7 @@ const step3Executor = self.MultiPageBackgroundStep3?.createStep3Executor({
   getTabId,
   isTabAlive,
   resolveSignupMethod,
-  sendToContentScript,
+  sendToContentScriptResilient,
   setPasswordState,
   setState,
   SIGNUP_PAGE_INJECT_FILES,

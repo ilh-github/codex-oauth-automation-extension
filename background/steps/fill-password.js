@@ -10,7 +10,7 @@
       getTabId,
       isTabAlive,
       resolveSignupMethod,
-      sendToContentScript,
+      sendToContentScriptResilient,
       setPasswordState,
       setState,
       SIGNUP_PAGE_INJECT_FILES,
@@ -104,7 +104,7 @@
       await addLog(
         `步骤 3：正在填写密码，${identityLabel}，密码为${state.customPassword ? '自定义' : '自动生成'}（${password.length} 位）`
       );
-      await sendToContentScript('signup-page', {
+      await sendToContentScriptResilient('signup-page', {
         type: 'EXECUTE_STEP',
         step: 3,
         source: 'background',
@@ -115,6 +115,11 @@
           accountIdentifier: identity.accountIdentifier,
           password,
         },
+      }, {
+        timeoutMs: 45000,
+        responseTimeoutMs: 45000,
+        retryDelayMs: 700,
+        logMessage: '步骤 3：密码页提交前页面通信中断，正在等待认证页脚本恢复...',
       });
     }
 
