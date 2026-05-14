@@ -571,3 +571,53 @@ test('phone auth exposes resend page error checks for banned numbers', () => {
     global.document = originalDocument;
   }
 });
+
+test('phone auth exposes contact-verification provider error state after resend', () => {
+  const originalLocation = global.location;
+  const originalDocument = global.document;
+  try {
+    global.location = {
+      href: 'https://auth.openai.com/contact-verification',
+      pathname: '/contact-verification',
+    };
+    global.document = {
+      title: '糟糕，出错了！',
+      querySelector() {
+        return {
+          querySelector() {
+            return null;
+          },
+          querySelectorAll() {
+            return [];
+          },
+        };
+      },
+    };
+
+    const helpers = api.createPhoneAuthHelpers({
+      fillInput: () => {},
+      getActionText: () => '',
+      getPageTextSnapshot: () => '验证过程中出错。请重试。 错误代码: unhandled_provider_error',
+      getVerificationErrorText: () => '',
+      humanPause: async () => {},
+      isActionEnabled: () => true,
+      isAddPhonePageReady: () => false,
+      isConsentReady: () => false,
+      isPhoneVerificationPageReady: () => true,
+      isVisibleElement: () => true,
+      simulateClick: () => {},
+      sleep: async () => {},
+      throwIfStopped: () => {},
+      waitForElement: async () => null,
+    });
+
+    const result = helpers.checkPhoneResendError();
+    assert.equal(result.hasError, true);
+    assert.equal(result.reason, 'resend_server_error');
+    assert.equal(result.prefix, 'PHONE_RESEND_SERVER_ERROR::');
+    assert.match(result.message, /unhandled_provider_error|验证过程中出错/);
+  } finally {
+    global.location = originalLocation;
+    global.document = originalDocument;
+  }
+});

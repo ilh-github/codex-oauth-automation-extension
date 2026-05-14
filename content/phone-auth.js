@@ -30,6 +30,7 @@
     const PHONE_RESEND_THROTTLED_PATTERN = /tried\s+to\s+resend\s+too\s+many\s+times|please\s+try\s+again\s+later|too\s+many\s+resend|resend\s+too\s+many|发送.*过于频繁|稍后再试|重试次数过多/i;
     const PHONE_RESEND_BANNED_NUMBER_PATTERN = /无法向此电话号码发送短信|无法向此手机号发送短信|无法发送短信到此电话号码|无法发送短信到此手机号|can(?:not|'t)\s+send\s+(?:an?\s+)?(?:sms|text(?:\s+message)?)\s+to\s+(?:this|that)\s+(?:phone\s+)?number|unable\s+to\s+send\s+(?:an?\s+)?(?:sms|text(?:\s+message)?)\s+to\s+(?:this|that)\s+(?:phone\s+)?number/i;
     const PHONE_RESEND_SERVER_ERROR_PATTERN = /this\s+page\s+isn['’]?t\s+working|currently\s+unable\s+to\s+handle\s+this\s+request|http\s+error\s+500|500\s+internal\s+server\s+error/i;
+    const PHONE_RESEND_PROVIDER_ERROR_PATTERN = /验证过程中出错|请重试|unhandled_provider_error|verification\s+process\s+encountered\s+an?\s+error/i;
     const PHONE_ROUTE_405_PATTERN = /405\s+method\s+not\s+allowed|route\s+error.*405|did\s+not\s+provide\s+an?\s+[`'"]?action|post\s+request\s+to\s+["']?\/phone-verification/i;
     const PHONE_ROUTE_405_MAX_RECOVERY_CLICKS = 3;
     const rootScope = typeof self !== 'undefined' ? self : globalThis;
@@ -566,6 +567,20 @@
       return combined || 'OpenAI contact-verification page returned HTTP ERROR 500 after resend.';
     }
 
+    function getPhoneResendProviderErrorText() {
+      const path = String(location?.pathname || '');
+      if (!/\/contact-verification(?:[/?#]|$)/i.test(path)) {
+        return '';
+      }
+      const text = String(getPageTextSnapshot?.() || '').replace(/\s+/g, ' ').trim();
+      const title = String(document?.title || '').replace(/\s+/g, ' ').trim();
+      const combined = `${title} ${text}`.trim();
+      if (!PHONE_RESEND_PROVIDER_ERROR_PATTERN.test(combined)) {
+        return '';
+      }
+      return combined || 'OpenAI contact-verification page entered provider error state after resend.';
+    }
+
     function checkPhoneResendError() {
       const maxUsageText = getAddPhoneErrorText();
       if (maxUsageText && PHONE_MAX_USAGE_EXCEEDED_PATTERN.test(maxUsageText)) {
@@ -606,6 +621,17 @@
           reason: 'resend_server_error',
           prefix: PHONE_RESEND_SERVER_ERROR_PREFIX,
           message: serverErrorText,
+          url: location.href,
+        };
+      }
+
+      const providerErrorText = getPhoneResendProviderErrorText();
+      if (providerErrorText) {
+        return {
+          hasError: true,
+          reason: 'resend_server_error',
+          prefix: PHONE_RESEND_SERVER_ERROR_PREFIX,
+          message: providerErrorText,
           url: location.href,
         };
       }

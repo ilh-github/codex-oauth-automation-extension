@@ -2783,6 +2783,7 @@ const STEP4_405_RECOVERY_ERROR_PREFIX = 'STEP4_405_RECOVERY_LIMIT::';
 const STEP4_405_RECOVERY_LIMIT = 3;
 const SIGNUP_USER_ALREADY_EXISTS_ERROR_PREFIX = 'SIGNUP_USER_ALREADY_EXISTS::';
 const SIGNUP_PHONE_PASSWORD_MISMATCH_ERROR_PREFIX = 'SIGNUP_PHONE_PASSWORD_MISMATCH::';
+const SIGNUP_PASSWORD_RETRYABLE_FAILURE_PATTERN = /创建(?:帐户|账户)失败|请重试|unable\s+to\s+create\s+(?:your\s+)?account|couldn'?t\s+create\s+(?:your\s+)?account|something\s+went\s+wrong/i;
 const AUTH_MAX_CHECK_ATTEMPTS_ERROR_PREFIX = 'AUTH_MAX_CHECK_ATTEMPTS::';
 const STEP8_EMAIL_IN_USE_ERROR_PREFIX = 'STEP8_EMAIL_IN_USE::';
 const SIGNUP_EMAIL_EXISTS_PATTERN = /与此电子邮件地址相关联的帐户已存在|account\s+associated\s+with\s+this\s+email\s+address\s+already\s+exists|email\s+address.*already\s+exists/i;
@@ -2886,7 +2887,7 @@ function getVisibleFieldErrorText() {
 
 function getSignupPasswordFieldErrorText() {
   const text = getVisibleFieldErrorText();
-  if (text && SIGNUP_PHONE_PASSWORD_MISMATCH_PATTERN.test(text)) {
+  if (text && (SIGNUP_PHONE_PASSWORD_MISMATCH_PATTERN.test(text) || SIGNUP_PASSWORD_RETRYABLE_FAILURE_PATTERN.test(text))) {
     return text;
   }
 
@@ -2894,7 +2895,7 @@ function getSignupPasswordFieldErrorText() {
   if (passwordInput) {
     const wrapper = passwordInput.closest('form, [data-rac], [role="group"], section, div');
     const wrapperText = (wrapper?.textContent || '').replace(/\s+/g, ' ').trim();
-    if (wrapperText && SIGNUP_PHONE_PASSWORD_MISMATCH_PATTERN.test(wrapperText)) {
+    if (wrapperText && (SIGNUP_PHONE_PASSWORD_MISMATCH_PATTERN.test(wrapperText) || SIGNUP_PASSWORD_RETRYABLE_FAILURE_PATTERN.test(wrapperText))) {
       return wrapperText;
     }
   }

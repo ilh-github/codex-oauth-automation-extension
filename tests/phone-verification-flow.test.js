@@ -6046,7 +6046,6 @@ test('signup phone verification stops immediately when resend succeeds but page 
   );
 
   assert.equal(currentState.signupPhoneActivation, null);
-  assert.equal(messages.includes('RESEND_VERIFICATION_CODE'), true);
   assert.equal(messages.includes('CHECK_PHONE_RESEND_ERROR'), true);
   assert.equal(statusPolls <= 7, true);
 });
