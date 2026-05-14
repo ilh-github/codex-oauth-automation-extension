@@ -11694,6 +11694,7 @@ const step6Executor = self.MultiPageBackgroundStep6?.createStep6Executor({
   completeStepFromBackground,
   getErrorMessage,
   registrationSuccessWaitMs: STEP6_REGISTRATION_SUCCESS_WAIT_MS,
+  sendToContentScriptResilient,
   sleepWithStop,
 });
 const step7Executor = self.MultiPageBackgroundStep7?.createStep7Executor({

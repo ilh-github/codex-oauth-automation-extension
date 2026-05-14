@@ -40,6 +40,7 @@ if (document.documentElement.getAttribute(SIGNUP_PAGE_LISTENER_SENTINEL) !== '1'
       || message.type === 'ENSURE_SIGNUP_ENTRY_READY'
       || message.type === 'ENSURE_SIGNUP_PHONE_ENTRY_READY'
       || message.type === 'ENSURE_SIGNUP_PASSWORD_PAGE_READY'
+      || message.type === 'DISMISS_CHATGPT_ONBOARDING'
     ) {
       resetStopState();
       handleCommand(message).then((result) => {
@@ -122,6 +123,8 @@ async function handleCommand(message) {
       return await ensureSignupPhoneEntryReady();
     case 'ENSURE_SIGNUP_PASSWORD_PAGE_READY':
       return await ensureSignupPasswordPageReady();
+    case 'DISMISS_CHATGPT_ONBOARDING':
+      return await dismissChatgptOnboarding(message.payload);
     case 'STEP8_FIND_AND_CLICK':
       return await step8_findAndClick(message.payload);
     case 'STEP8_GET_STATE':
@@ -208,6 +211,57 @@ function getActionText(el) {
     .join(' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+const CHATGPT_ONBOARDING_PAGE_PATTERN = /是什么促使你使用\s*ChatGPT|你已准备就绪|入门技巧|请勿共享敏感信息|请核实你的信息|what\s+brings\s+you\s+to\s+chatgpt|you're\s+ready|you'?re\s+all\s+set|get\s+started|onboarding/i;
+const CHATGPT_ONBOARDING_ACTION_PATTERN = /^(下一步|继续|跳过|好的，?开始吧|开始吧|next|continue|skip|ok(?:ay)?[,，]?\s*(?:let'?s\s*)?(?:go|start)|let'?s\s+go|get\s+started)$/i;
+
+function normalizeActionText(text = '') {
+  return String(text || '').replace(/\s+/g, ' ').trim();
+}
+
+function findChatgptOnboardingActionButton() {
+  if (!CHATGPT_ONBOARDING_PAGE_PATTERN.test(getPageTextSnapshot())) {
+    return null;
+  }
+
+  const candidates = Array.from(document.querySelectorAll(
+    'button, [role="button"], a, input[type="button"], input[type="submit"]'
+  ));
+  return candidates.find((el) => {
+    if (!isVisibleElement(el) || !isActionEnabled(el)) {
+      return false;
+    }
+    return CHATGPT_ONBOARDING_ACTION_PATTERN.test(normalizeActionText(getActionText(el)));
+  }) || null;
+}
+
+async function dismissChatgptOnboarding(payload = {}) {
+  const maxClicks = Math.max(1, Math.min(8, Math.floor(Number(payload?.maxClicks) || 4)));
+  const clicked = [];
+
+  for (let index = 0; index < maxClicks; index += 1) {
+    throwIfStopped();
+    const button = findChatgptOnboardingActionButton();
+    if (!button) {
+      break;
+    }
+
+    const buttonText = normalizeActionText(getActionText(button));
+    button.scrollIntoView?.({ behavior: 'auto', block: 'center' });
+    button.focus?.();
+    await humanPause(120, 260);
+    button.click();
+    clicked.push(buttonText || 'unknown');
+    log(`步骤 6：已点击注册后引导按钮“${buttonText || 'unknown'}”。`, 'info', { step: 6, stepKey: 'wait-registration-success' });
+    await sleep(1000);
+  }
+
+  return {
+    clickedCount: clicked.length,
+    clicked,
+    url: location.href,
+  };
 }
 
 function isActionEnabled(el) {

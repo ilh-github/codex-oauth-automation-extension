@@ -89,6 +89,40 @@ test('step 6 only clears cookies when cleanup switch is enabled', async () => {
   assert.ok(events.browsingDataCalls[0].origins.includes('https://chatgpt.com'));
 });
 
+test('step 6 dismisses post-registration ChatGPT onboarding when available', async () => {
+  const source = fs.readFileSync('background/steps/wait-registration-success.js', 'utf8');
+  const globalScope = {};
+  const api = new Function('self', `${source}; return self.MultiPageBackgroundStep6;`)(globalScope);
+
+  const events = {
+    logs: [],
+    sentMessages: [],
+    completedSteps: [],
+  };
+
+  const executor = api.createStep6Executor({
+    addLog: async (message, level = 'info') => {
+      events.logs.push({ message, level });
+    },
+    completeStepFromBackground: async (step) => {
+      events.completedSteps.push(step);
+    },
+    sendToContentScriptResilient: async (sourceName, message, options) => {
+      events.sentMessages.push({ sourceName, message, options });
+      return { clickedCount: 2 };
+    },
+    sleepWithStop: async () => {},
+  });
+
+  await executor.executeStep6();
+
+  assert.equal(events.sentMessages.length, 1);
+  assert.equal(events.sentMessages[0].sourceName, 'signup-page');
+  assert.equal(events.sentMessages[0].message.type, 'DISMISS_CHATGPT_ONBOARDING');
+  assert.deepStrictEqual(events.completedSteps, [6]);
+  assert.ok(events.logs.some(({ message }) => /已自动处理 2 个注册后的 ChatGPT 引导按钮/.test(message)));
+});
+
 test('step 7 retries up to configured limit and then fails', async () => {
   const source = fs.readFileSync('background/steps/oauth-login.js', 'utf8');
   const globalScope = {};

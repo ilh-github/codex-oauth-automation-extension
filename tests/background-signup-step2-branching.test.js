@@ -956,12 +956,13 @@ test('signup flow helper rewrites retryable step 3 finalize transport timeout in
     /步骤 3：认证页在提交后切换过程中页面通信超时/
   );
 
-  assert.deepStrictEqual(logs, [
-    {
-      message: '步骤 3：认证页在提交后切换过程中页面通信超时，未能重新就绪，暂时无法确认是否进入下一页面。请重试当前轮。',
-      level: 'warn',
-    },
-  ]);
+  assert.equal(logs.length, 2);
+  assert.match(logs[0].message, /复核真实页面状态也失败/);
+  assert.equal(logs[0].level, 'warn');
+  assert.deepStrictEqual(logs[1], {
+    message: '步骤 3：认证页在提交后切换过程中页面通信超时，未能重新就绪，暂时无法确认是否进入下一页面。请重试当前轮。',
+    level: 'warn',
+  });
 });
 
 test('signup flow helper continues when step 3 finalize transport timeout is followed by a detected landing page', async () => {
@@ -1008,6 +1009,56 @@ test('signup flow helper continues when step 3 finalize transport timeout is fol
   assert.deepStrictEqual(logs, [
     {
       message: '步骤 3：认证页在提交后切换时通信短暂中断，但复核发现已进入verification_page，继续后续流程。',
+      level: 'warn',
+    },
+  ]);
+});
+
+test('signup flow helper treats chatgpt home after step 3 transport timeout as logged-in success', async () => {
+  const logs = [];
+
+  const helpers = signupFlowApi.createSignupFlowHelpers({
+    addLog: async (message, level = 'info') => {
+      logs.push({ message, level });
+    },
+    buildGeneratedAliasEmail: () => '',
+    chrome: { tabs: { get: async () => ({ id: 31, url: 'https://chatgpt.com/' }) } },
+    ensureContentScriptReadyOnTab: async () => {},
+    ensureHotmailAccountForFlow: async () => ({}),
+    ensureLuckmailPurchaseForFlow: async () => ({}),
+    isGeneratedAliasProvider: () => false,
+    isReusableGeneratedAliasEmail: () => false,
+    isHotmailProvider: () => false,
+    isRetryableContentScriptTransportError: (error) => /did not respond in 45s/i.test(error?.message || String(error || '')),
+    isLuckmailProvider: () => false,
+    isSignupEmailVerificationPageUrl: () => false,
+    isSignupPasswordPageUrl: () => false,
+    reuseOrCreateTab: async () => 31,
+    sendToContentScriptResilient: async (...args) => {
+      const [, message] = args;
+      if (message?.type === 'PREPARE_SIGNUP_VERIFICATION') {
+        throw new Error('Content script on signup-page did not respond in 45s. Try refreshing the tab and retry.');
+      }
+      return {};
+    },
+    setEmailState: async () => {},
+    SIGNUP_ENTRY_URL: 'https://chatgpt.com/',
+    SIGNUP_PAGE_INJECT_FILES: ['content/utils.js', 'content/signup-page.js'],
+    waitForTabUrlMatch: async () => ({ id: 31, url: 'https://chatgpt.com/' }),
+  });
+
+  const result = await helpers.finalizeSignupPasswordSubmitInTab(31, 'Secret123!', 3);
+
+  assert.deepStrictEqual(result, {
+    ready: true,
+    state: 'logged_in_home',
+    url: 'https://chatgpt.com/',
+    skipProfileStep: true,
+    recoveredAfterTransportTimeout: true,
+  });
+  assert.deepStrictEqual(logs, [
+    {
+      message: '步骤 3：认证页在提交后切换时通信短暂中断，但复核发现已进入logged_in_home，继续后续流程。',
       level: 'warn',
     },
   ]);

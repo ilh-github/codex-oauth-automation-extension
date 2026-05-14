@@ -102,8 +102,36 @@
       completeStepFromBackground,
       getErrorMessage = (error) => error?.message || String(error || '未知错误'),
       registrationSuccessWaitMs = DEFAULT_REGISTRATION_SUCCESS_WAIT_MS,
+      sendToContentScriptResilient = null,
       sleepWithStop = async (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0))),
     } = deps;
+
+    async function dismissChatgptOnboardingIfPresent() {
+      if (typeof sendToContentScriptResilient !== 'function') {
+        return;
+      }
+
+      try {
+        const result = await sendToContentScriptResilient('signup-page', {
+          type: 'DISMISS_CHATGPT_ONBOARDING',
+          step: 6,
+          source: 'background',
+          payload: {
+            maxClicks: 4,
+          },
+        }, {
+          timeoutMs: 12000,
+          retryDelayMs: 500,
+          responseTimeoutMs: 5000,
+        });
+
+        if (Number(result?.clickedCount) > 0) {
+          await addLog(`步骤 6：已自动处理 ${result.clickedCount} 个注册后的 ChatGPT 引导按钮。`, 'ok');
+        }
+      } catch (error) {
+        await addLog(`步骤 6：注册后引导按钮处理失败，已跳过并继续后续流程：${getErrorMessage(error)}`, 'warn');
+      }
+    }
 
     async function clearCookiesIfEnabled(state = {}) {
       if (!state?.step6CookieCleanupEnabled) {
@@ -147,6 +175,7 @@
         await addLog(`步骤 6：等待 ${Math.round(waitMs / 1000)} 秒，确认注册成功并让页面稳定...`, 'info');
         await sleepWithStop(waitMs);
       }
+      await dismissChatgptOnboardingIfPresent();
       await clearCookiesIfEnabled(state);
       await addLog('步骤 6：注册成功等待完成，准备继续获取 OAuth 链接并登录。', 'ok');
       await completeStepFromBackground(6);

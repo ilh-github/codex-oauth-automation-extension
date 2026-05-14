@@ -116,6 +116,18 @@
       return /\/(?:create-account\/profile|u\/signup\/profile|signup\/profile|about-you)(?:[/?#]|$)/i.test(parsed.pathname || '');
     }
 
+    function fallbackLikelyLoggedInChatgptHomeUrl(rawUrl) {
+      const parsed = parseUrlSafely(rawUrl);
+      if (!parsed) return false;
+      const host = String(parsed.hostname || '').toLowerCase();
+      if (!['chatgpt.com', 'www.chatgpt.com', 'chat.openai.com'].includes(host)) {
+        return false;
+      }
+
+      const path = String(parsed.pathname || '');
+      return !/^\/(?:auth\/|create-account\/|email-verification|log-in|add-phone)(?:[/?#]|$)/i.test(path);
+    }
+
     function resolveSignupPostIdentityState(rawUrl) {
       if (isSignupPasswordPageUrl(rawUrl)) {
         return 'password_page';
@@ -134,6 +146,9 @@
         : fallbackSignupProfilePageUrl(rawUrl);
       if (isProfileUrl) {
         return 'profile_page';
+      }
+      if (fallbackLikelyLoggedInChatgptHomeUrl(rawUrl)) {
+        return 'logged_in_home';
       }
       return '';
     }
@@ -167,7 +182,7 @@
       }
 
       if (!landingState) {
-        throw new Error(`注册身份提交后未能识别当前页面，既不是密码页、验证码页，也不是资料页。URL: ${landingUrl || 'unknown'}`);
+        throw new Error(`注册身份提交后未能识别当前页面，既不是密码页、验证码页、资料页，也不是已登录 ChatGPT 页面。URL: ${landingUrl || 'unknown'}`);
       }
 
       if (landingState !== 'password_page' && typeof waitForTabStableComplete === 'function') {
@@ -201,6 +216,7 @@
           ready: true,
           state: landingState,
           url: landingUrl,
+          ...(landingState === 'logged_in_home' ? { skipProfileStep: true } : {}),
         };
       }
 
@@ -286,7 +302,14 @@
                 recoveredAfterTransportTimeout: true,
               };
             }
-          } catch {}
+          } catch (recoverError) {
+            if (typeof addLog === 'function') {
+              await addLog(
+                `步骤 ${step}：认证页提交后通信超时，复核真实页面状态也失败：${recoverError?.message || recoverError}`,
+                'warn'
+              );
+            }
+          }
           const message = `步骤 ${step}：认证页在提交后切换过程中页面通信超时，未能重新就绪，暂时无法确认是否进入下一页面。请重试当前轮。`;
           if (typeof addLog === 'function') {
             await addLog(message, 'warn');
