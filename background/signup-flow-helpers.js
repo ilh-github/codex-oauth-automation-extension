@@ -270,6 +270,23 @@
         });
       } catch (error) {
         if (isRetryableContentScriptTransportError(error)) {
+          try {
+            const recoveredState = await ensureSignupPostIdentityPageReadyInTab(tabId, step, {
+              skipUrlWait: false,
+            });
+            if (recoveredState?.state && recoveredState.state !== 'password_page') {
+              if (typeof addLog === 'function') {
+                await addLog(
+                  `步骤 ${step}：认证页在提交后切换时通信短暂中断，但复核发现已进入${recoveredState.state}，继续后续流程。`,
+                  'warn'
+                );
+              }
+              return {
+                ...(recoveredState || {}),
+                recoveredAfterTransportTimeout: true,
+              };
+            }
+          } catch {}
           const message = `步骤 ${step}：认证页在提交后切换过程中页面通信超时，未能重新就绪，暂时无法确认是否进入下一页面。请重试当前轮。`;
           if (typeof addLog === 'function') {
             await addLog(message, 'warn');

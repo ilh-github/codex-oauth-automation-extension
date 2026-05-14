@@ -963,3 +963,52 @@ test('signup flow helper rewrites retryable step 3 finalize transport timeout in
     },
   ]);
 });
+
+test('signup flow helper continues when step 3 finalize transport timeout is followed by a detected landing page', async () => {
+  const logs = [];
+
+  const helpers = signupFlowApi.createSignupFlowHelpers({
+    addLog: async (message, level = 'info') => {
+      logs.push({ message, level });
+    },
+    buildGeneratedAliasEmail: () => '',
+    chrome: { tabs: { get: async () => ({ id: 31, url: 'https://auth.openai.com/email-verification' }) } },
+    ensureContentScriptReadyOnTab: async () => {},
+    ensureHotmailAccountForFlow: async () => ({}),
+    ensureLuckmailPurchaseForFlow: async () => ({}),
+    isGeneratedAliasProvider: () => false,
+    isReusableGeneratedAliasEmail: () => false,
+    isHotmailProvider: () => false,
+    isRetryableContentScriptTransportError: (error) => /did not respond in 45s/i.test(error?.message || String(error || '')),
+    isLuckmailProvider: () => false,
+    isSignupEmailVerificationPageUrl: (url) => /email-verification/i.test(url || ''),
+    isSignupPasswordPageUrl: () => false,
+    reuseOrCreateTab: async () => 31,
+    sendToContentScriptResilient: async (...args) => {
+      const [source, message] = args;
+      if (message?.type === 'PREPARE_SIGNUP_VERIFICATION') {
+        throw new Error('Content script on signup-page did not respond in 45s. Try refreshing the tab and retry.');
+      }
+      return {};
+    },
+    setEmailState: async () => {},
+    SIGNUP_ENTRY_URL: 'https://chatgpt.com/',
+    SIGNUP_PAGE_INJECT_FILES: ['content/utils.js', 'content/signup-page.js'],
+    waitForTabUrlMatch: async () => ({ id: 31, url: 'https://auth.openai.com/email-verification' }),
+  });
+
+  const result = await helpers.finalizeSignupPasswordSubmitInTab(31, 'Secret123!', 3);
+
+  assert.deepStrictEqual(result, {
+    ready: true,
+    state: 'verification_page',
+    url: 'https://auth.openai.com/email-verification',
+    recoveredAfterTransportTimeout: true,
+  });
+  assert.deepStrictEqual(logs, [
+    {
+      message: '步骤 3：认证页在提交后切换时通信短暂中断，但复核发现已进入verification_page，继续后续流程。',
+      level: 'warn',
+    },
+  ]);
+});
