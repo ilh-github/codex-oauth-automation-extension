@@ -5550,6 +5550,7 @@
               onTimeoutWindow: async () => {
                 try {
                   await resendSignupPhoneVerificationCode(tabId);
+                  await throwPhonePageImmediateErrorIfPresent(tabId, state, { step: 4 });
                   await addLog('步骤 4：已点击注册手机验证码页面的“重新发送”。', 'info', {
                     step: 4,
                     stepKey: 'fetch-signup-code',
@@ -5801,6 +5802,7 @@
               onTimeoutWindow: async () => {
                 try {
                   await resendLoginPhoneVerificationCode(tabId, { visibleStep });
+                  await throwPhonePageImmediateErrorIfPresent(tabId, state, { step: visibleStep });
                   await addLog(`步骤 ${visibleStep}：已点击登录手机验证码页面的“重新发送”。`, 'info', {
                     step: visibleStep,
                     stepKey: 'fetch-login-code',

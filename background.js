@@ -4860,7 +4860,7 @@ function ensureLuckmailApiKey(state = {}) {
   return apiKey;
 }
 
-async function requestLuckmail(method, path, { baseUrl, apiKey, params, jsonData, timeout = 30000 } = {}) {
+async function requestLuckmail(method, path, { baseUrl, apiKey, params, jsonData, timeout = 60000 } = {}) {
   const requestUrl = new URL(`${normalizeLuckmailBaseUrl(baseUrl)}${path}`);
   if (params && typeof params === 'object') {
     for (const [key, value] of Object.entries(params)) {

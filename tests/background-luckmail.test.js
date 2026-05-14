@@ -264,6 +264,110 @@ return {
   assert.match(snapshot.activateCalls[0].options.logMessage, /已复用 openai 邮箱/);
 });
 
+test('requestLuckmail defaults to a longer timeout for high-latency LuckMail APIs', async () => {
+  const bundle = extractFunction('requestLuckmail');
+
+  const factory = new Function(`
+let aborts = 0;
+class AbortController {
+  constructor() {
+    this.signal = { aborted: false };
+  }
+  abort() {
+    aborts += 1;
+    this.signal.aborted = true;
+  }
+}
+async function fetch() {
+  return {
+    ok: true,
+    async json() {
+      return { code: 0, data: { ok: true } };
+    },
+  };
+}
+function normalizeLuckmailBaseUrl(value) {
+  return String(value || '').trim() || 'https://mails.luckyous.com';
+}
+
+${bundle}
+
+return {
+  requestLuckmail,
+  snapshot() {
+    return { aborts };
+  },
+};
+`);
+
+  const api = factory();
+  const originalSetTimeout = global.setTimeout;
+  const originalClearTimeout = global.clearTimeout;
+  const scheduled = [];
+  global.setTimeout = (fn, ms) => {
+    scheduled.push(ms);
+    return { fn, ms };
+  };
+  global.clearTimeout = () => {};
+
+  try {
+    await api.requestLuckmail('GET', '/api/v1/openapi/email/purchases', {
+      baseUrl: 'https://mails.luckyous.com',
+      apiKey: 'sk-test',
+    });
+  } finally {
+    global.setTimeout = originalSetTimeout;
+    global.clearTimeout = originalClearTimeout;
+  }
+
+  assert.equal(scheduled[0], 60000);
+  assert.equal(api.snapshot().aborts, 0);
+});
+
+test('createLuckmailClient keeps purchases list on the shared longer timeout baseline', async () => {
+  const bundle = extractFunction('createLuckmailClient');
+
+  const factory = new Function(`
+const capturedCalls = [];
+
+function getLuckmailSessionConfig() {
+  return { baseUrl: 'https://mails.luckyous.com' };
+}
+function ensureLuckmailApiKey() {
+  return 'sk-test';
+}
+async function requestLuckmail(method, path, options = {}) {
+  capturedCalls.push({ method, path, options });
+  return {
+    list: [],
+    pagination: { page: 1, page_size: 100, total: 0, total_pages: 0 },
+  };
+}
+function normalizeLuckmailPurchaseListPage(value) {
+  return value;
+}
+
+${bundle}
+
+return {
+  createLuckmailClient,
+  snapshot() {
+    return capturedCalls;
+  },
+};
+`);
+
+  const api = factory();
+  const client = api.createLuckmailClient({});
+  await client.user.getPurchases({});
+
+  const calls = api.snapshot();
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].method, 'GET');
+  assert.equal(calls[0].path, '/api/v1/openapi/email/purchases');
+  assert.equal(Object.prototype.hasOwnProperty.call(calls[0].options, 'timeout'), false);
+});
+
 test('activateLuckmailPurchaseForFlow builds baseline cursor from existing mails when reusing mailbox', async () => {
   const bundle = extractFunction('activateLuckmailPurchaseForFlow');
 

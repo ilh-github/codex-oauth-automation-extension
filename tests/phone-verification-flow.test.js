@@ -5970,6 +5970,87 @@ test('signup phone verification cancels activation immediately when page says it
   assert.equal(statusPolls <= 1, true);
 });
 
+test('signup phone verification stops immediately when resend succeeds but page already shows banned-number error', async () => {
+  const messages = [];
+  let statusPolls = 0;
+  let currentState = {
+    heroSmsApiKey: 'demo-key',
+    phoneSmsProvider: 'hero-sms',
+    heroSmsCountryId: 73,
+    heroSmsCountryLabel: 'Brazil',
+    verificationResendCount: 0,
+    phoneCodeWaitSeconds: 70,
+    phoneCodeTimeoutWindows: 2,
+    phoneCodePollIntervalSeconds: 10,
+    phoneCodePollMaxRounds: 7,
+    signupPhoneActivation: {
+      activationId: '940002',
+      phoneNumber: '5516998560321',
+      provider: 'hero-sms',
+      countryId: 73,
+      countryLabel: 'Brazil',
+    },
+  };
+
+  const helpers = api.createPhoneVerificationHelpers({
+    addLog: async () => {},
+    fetchImpl: async (url) => {
+      const parsedUrl = new URL(url);
+      const action = parsedUrl.searchParams.get('action');
+      if (action === 'getStatus' || action === 'getStatusV2') {
+        statusPolls += 1;
+        return { ok: true, text: async () => 'STATUS_WAIT_CODE' };
+      }
+      if (action === 'setStatus') {
+        return { ok: true, text: async () => 'STATUS_UPDATED:940002' };
+      }
+      throw new Error(`Unexpected HeroSMS action: ${action}`);
+    },
+    getState: async () => ({ ...currentState }),
+    sendToContentScriptResilient: async (_source, message) => {
+      messages.push(message.type);
+      if (message.type === 'STEP8_GET_STATE') {
+        return {
+          phoneVerificationPage: true,
+          url: 'https://auth.openai.com/contact-verification',
+        };
+      }
+      if (message.type === 'RESEND_VERIFICATION_CODE') {
+        return {
+          resent: true,
+          buttonText: '重新发送文本消息',
+          url: 'https://auth.openai.com/contact-verification',
+        };
+      }
+      if (message.type === 'CHECK_PHONE_RESEND_ERROR') {
+        return {
+          hasError: true,
+          reason: 'resend_phone_banned',
+          prefix: 'PHONE_RESEND_BANNED_NUMBER::',
+          message: '无法向此电话号码发送文本消息',
+          url: 'https://auth.openai.com/contact-verification',
+        };
+      }
+      throw new Error(`Unexpected content-script message: ${message.type}`);
+    },
+    setState: async (updates) => {
+      currentState = { ...currentState, ...updates };
+    },
+    sleepWithStop: async () => {},
+    throwIfStopped: () => {},
+  });
+
+  await assert.rejects(
+    () => helpers.completeSignupPhoneVerificationFlow(1, { state: currentState }),
+    /无法向此电话号码发送文本消息/
+  );
+
+  assert.equal(currentState.signupPhoneActivation, null);
+  assert.equal(messages.includes('RESEND_VERIFICATION_CODE'), true);
+  assert.equal(messages.includes('CHECK_PHONE_RESEND_ERROR'), true);
+  assert.equal(statusPolls <= 7, true);
+});
+
 test('signup phone verification cancels activation when resend lands on contact-verification 500 page but content script drops', async () => {
   const requests = [];
   const tabSnapshots = [];
