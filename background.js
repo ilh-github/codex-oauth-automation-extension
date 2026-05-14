@@ -11317,6 +11317,13 @@ async function runAutoSequenceFromStep(startStep, context = {}) {
       }
 
       const restartDecision = await getPostStep6AutoRestartDecision(step, err);
+      if (step === 10 && isPlatformVerifyProxyUnreachableFailure(err)) {
+        await addLog(
+          `步骤 ${step}：服务端当前无法直连 OpenAI，且未配置可用代理，停止自动回到步骤 7/9 重开。原因：${getErrorMessage(err)}`,
+          'warn'
+        );
+        throw err;
+      }
       if (restartDecision.shouldRestart) {
         postStep7RestartCount += 1;
         const restartStep = restartDecision.restartStep
@@ -12431,6 +12438,18 @@ function isAddPhoneAuthState(authState = {}) {
     || isAddPhoneAuthUrl(authState?.url);
 }
 
+function isPlatformVerifyProxyUnreachableFailure(errorLike) {
+  const text = String(
+    typeof getErrorMessage === 'function'
+      ? getErrorMessage(errorLike)
+      : (errorLike?.message || errorLike || '')
+  ).trim();
+  if (!text) {
+    return false;
+  }
+  return /OpenAI OAuth request failed:\s*no proxy is configured and this server could not reach OpenAI directly|Select a proxy that can access OpenAI/i.test(text);
+}
+
 async function getPostStep6AutoRestartDecision(step, error) {
   const resolveStepKey = (stepId, state) => {
     if (typeof getStepExecutionKeyForState === 'function') {
@@ -12863,8 +12882,32 @@ async function rerunStep7ForStep8Recovery(options = {}) {
 
   throwIfStopped();
   const initialState = await getState();
+  const forcedPhoneRecoveryState = (() => {
+    const signupMethod = String(initialState?.signupMethod || '').trim().toLowerCase();
+    const resolvedSignupMethod = String(initialState?.resolvedSignupMethod || '').trim().toLowerCase();
+    const signupPhoneNumber = String(
+      initialState?.signupPhoneNumber
+      || initialState?.signupPhoneCompletedActivation?.phoneNumber
+      || initialState?.signupPhoneActivation?.phoneNumber
+      || ''
+    ).trim();
+    const shouldForcePhoneIdentity = signupMethod === 'phone'
+      && resolvedSignupMethod !== 'email'
+      && Boolean(signupPhoneNumber)
+      && !Boolean(initialState?.plusModeEnabled)
+      && !Boolean(initialState?.contributionMode);
+    if (!shouldForcePhoneIdentity) {
+      return initialState;
+    }
+    return {
+      ...initialState,
+      accountIdentifierType: 'phone',
+      accountIdentifier: signupPhoneNumber,
+      signupPhoneNumber,
+    };
+  })();
   const authLoginStep = typeof getAuthChainStartStepId === 'function'
-    ? getAuthChainStartStepId(initialState)
+    ? getAuthChainStartStepId(forcedPhoneRecoveryState)
     : FINAL_OAUTH_CHAIN_START_STEP;
   await addLog(logMessage, 'warn', {
     step: logStep,
@@ -12875,7 +12918,7 @@ async function rerunStep7ForStep8Recovery(options = {}) {
 
   try {
     await step7Executor.executeStep7({
-      ...initialState,
+      ...forcedPhoneRecoveryState,
       visibleStep: authLoginStep,
     });
   } catch (err) {

@@ -232,6 +232,18 @@
       return /no\s+numbers\s+available\s+across|all provider candidates failed to acquire number|no\s+free\s+phones|numbers?\s+not\s+found|no\s+numbers\s+within\s+maxprice|countries\s+are\s+empty|均无可用号码|暂无可用号码|无可用号码|接码号池暂无|\bNO_NUMBERS\b/i.test(text);
     }
 
+    function isPlatformVerifyProxyUnreachableFailure(errorLike) {
+      const text = String(
+        typeof getErrorMessage === 'function'
+          ? getErrorMessage(errorLike)
+          : (errorLike?.message || errorLike || '')
+      ).trim();
+      if (!text) {
+        return false;
+      }
+      return /OpenAI OAuth request failed:\s*no proxy is configured and this server could not reach OpenAI directly|Select a proxy that can access OpenAI/i.test(text);
+    }
+
     async function logAutoRunFinalSummary(totalRuns, roundSummaries = []) {
       const summaries = buildAutoRunRoundSummaries(totalRuns, roundSummaries);
       const successRounds = summaries.filter((item) => item.status === 'success');
@@ -625,6 +637,8 @@
               && isAddPhoneAuthFailure(err);
             const blockedByPlusNonFreeTrial = typeof isPlusCheckoutNonFreeTrialFailure === 'function'
               && isPlusCheckoutNonFreeTrialFailure(err);
+            const blockedByPlatformVerifyProxyUnreachable = typeof isPlatformVerifyProxyUnreachableFailure === 'function'
+              && isPlatformVerifyProxyUnreachableFailure(err);
             const blockedByGpcTaskEnded = typeof isGpcTaskEndedFailure === 'function'
               ? isGpcTaskEndedFailure(err)
               : /GPC_TASK_ENDED::/i.test(err?.message || String(err || ''));
@@ -636,6 +650,7 @@
             const canRetry = !blockedByAddPhone
               && !blockedByPhoneNoSupply
               && !blockedByPlusNonFreeTrial
+              && !blockedByPlatformVerifyProxyUnreachable
               && !blockedByGpcTaskEnded
               && !blockedBySignupUserAlreadyExists
               && autoRunSkipFailures
@@ -744,6 +759,29 @@
                 'warn'
               );
               forceFreshTabsNextRun = true;
+              break;
+            }
+
+            if (blockedByPlatformVerifyProxyUnreachable) {
+              roundSummary.status = 'failed';
+              roundSummary.finalFailureReason = reason;
+              await setState({
+                autoRunRoundSummaries: serializeAutoRunRoundSummaries(totalRuns, roundSummaries),
+              });
+              await appendRoundRecordIfNeeded('failed', reason, err);
+              cancelPendingCommands('当前轮因 Step 10 服务端无法直连 OpenAI 且未配置代理已终止。');
+              await broadcastStopToContentScripts();
+              await addLog(
+                `第 ${targetRun}/${totalRuns} 轮步骤 10 无法通过当前服务器直连 OpenAI，且未配置可用代理，当前自动运行将停止。`,
+                'warn'
+              );
+              stoppedEarly = true;
+              await broadcastAutoRunStatus('stopped', {
+                currentRun: targetRun,
+                totalRuns,
+                attemptRun,
+                sessionId: 0,
+              });
               break;
             }
 

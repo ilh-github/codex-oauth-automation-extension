@@ -60,6 +60,7 @@ const bundle = [
   extractFunction('isGpcCheckoutRestartRequiredFailure'),
   extractFunction('isPlusCheckoutRestartStep'),
   extractFunction('isPlusCheckoutRestartRequiredFailure'),
+  extractFunction('isPlatformVerifyProxyUnreachableFailure'),
   extractFunction('getLatestLogTimestamp'),
   extractFunction('buildAutoRunStepIdleRestartError'),
   extractFunction('isAutoRunStepIdleRestartError'),
@@ -419,6 +420,29 @@ test('auto-run restarts from confirm-oauth step after transient step10 token_exc
     },
   });
   assert.ok(events.logs.some(({ message }) => /回到步骤 9 重新开始授权流程/.test(message)));
+});
+
+test('auto-run does not restart oauth when step10 fails because no proxy can reach OpenAI', async () => {
+  const harness = createHarness({
+    failureStep: 10,
+    failureBudget: 1,
+    failureMessage: 'OpenAI OAuth request failed: no proxy is configured and this server could not reach OpenAI directly. Select a proxy that can access OpenAI, then retry; if the authorization code has expired, regenerate the authorization URL.',
+    authState: { state: 'verification_page', url: 'https://auth.openai.com/email-verification' },
+    customState: {
+      panelMode: 'sub2api',
+      stepStatuses: { 3: 'completed' },
+      visibleStep: 10,
+      contributionMode: false,
+    },
+  });
+
+  const result = await harness.runAndCaptureError();
+
+  assert.ok(result?.error);
+  assert.equal(result.events.invalidations.length, 0);
+  assert.ok(!result.events.logs.some(({ message }) => /回到步骤 7 重新开始授权流程/.test(message)));
+  assert.ok(!result.events.logs.some(({ message }) => /回到步骤 9 重新开始授权流程/.test(message)));
+  assert.ok(result.events.logs.some(({ message }) => /未配置可用代理|无法通过当前服务器直连 OpenAI/.test(message)));
 });
 
 test('auto-run restarts Plus/GPC oauth-login aggregate entry-open failure from step 10', async () => {

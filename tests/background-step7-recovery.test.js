@@ -6,6 +6,53 @@ const source = fs.readFileSync('background/steps/fetch-login-code.js', 'utf8');
 const globalScope = {};
 const api = new Function('self', `${source}; return self.MultiPageBackgroundStep8;`)(globalScope);
 
+function extractFunctionFromSource(fileSource, name) {
+  const markers = [`async function ${name}(`, `function ${name}(`];
+  const start = markers
+    .map((marker) => fileSource.indexOf(marker))
+    .find((index) => index >= 0);
+  if (start < 0) {
+    throw new Error(`missing function ${name}`);
+  }
+
+  let parenDepth = 0;
+  let signatureEnded = false;
+  let braceStart = -1;
+  for (let i = start; i < fileSource.length; i += 1) {
+    const ch = fileSource[i];
+    if (ch === '(') {
+      parenDepth += 1;
+    } else if (ch === ')') {
+      parenDepth -= 1;
+      if (parenDepth === 0) {
+        signatureEnded = true;
+      }
+    } else if (ch === '{' && signatureEnded) {
+      braceStart = i;
+      break;
+    }
+  }
+  if (braceStart < 0) {
+    throw new Error(`missing body for function ${name}`);
+  }
+
+  let depth = 0;
+  let end = braceStart;
+  for (; end < fileSource.length; end += 1) {
+    const ch = fileSource[end];
+    if (ch === '{') depth += 1;
+    if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        end += 1;
+        break;
+      }
+    }
+  }
+
+  return fileSource.slice(start, end);
+}
+
 test('step 8 submits login verification directly without replaying step 7', async () => {
   const calls = {
     ensureReady: 0,
@@ -599,6 +646,65 @@ test('step 8 does not rerun step 7 when auth transport closes but page is still 
   assert.equal(calls.resolveCalls, 2);
   assert.equal(calls.rerunStep7, 0);
   assert.equal(calls.ensureCalls >= 2, true);
+});
+
+test('step 8 rerun step 7 keeps phone login identity for phone signup even after add-email state is present', async () => {
+  const source = fs.readFileSync('background.js', 'utf8');
+  const rerunBundle = [
+    extractFunctionFromSource(source, 'rerunStep7ForStep8Recovery'),
+  ].join('\n');
+
+  const api = new Function(`
+const FINAL_OAUTH_CHAIN_START_STEP = 7;
+async function addLog() {}
+function throwIfStopped() {}
+function isStopError() { return false; }
+function isTerminalSecurityBlockedError() { return false; }
+async function handleCloudflareSecurityBlocked() {}
+async function setStepStatus() {}
+async function appendManualAccountRunRecordIfNeeded() {}
+async function sleepWithStop() {}
+function getErrorMessage(error) { return error?.message || String(error || ''); }
+function getAuthChainStartStepId() { return 7; }
+
+let latestState = {
+  signupMethod: 'phone',
+  resolvedSignupMethod: 'phone',
+  signupPhoneNumber: '+5571993688664',
+  accountIdentifierType: 'email',
+  accountIdentifier: 'rgufv4316239@outlook.com',
+  email: 'rgufv4316239@outlook.com',
+  plusModeEnabled: false,
+  contributionMode: false,
+};
+let capturedPayload = null;
+
+async function getState() {
+  return latestState;
+}
+
+const step7Executor = {
+  async executeStep7(payload) {
+    capturedPayload = payload;
+  },
+};
+
+${rerunBundle}
+
+return {
+  async run() {
+    await rerunStep7ForStep8Recovery({});
+    return capturedPayload;
+  },
+};
+`)();
+
+  const payload = await api.run();
+
+  assert.equal(payload.accountIdentifierType, 'phone');
+  assert.equal(payload.accountIdentifier, '+5571993688664');
+  assert.equal(payload.signupPhoneNumber, '+5571993688664');
+  assert.equal(payload.email, 'rgufv4316239@outlook.com');
 });
 
 test('step 8 email_in_use recovery preserves the previous registration baseline', async () => {
