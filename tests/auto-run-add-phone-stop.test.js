@@ -332,6 +332,167 @@ test('auto-run controller treats phone-number supply exhaustion as round-fatal a
   assert.equal(runtime.state.autoRunSessionId, 0);
 });
 
+test('auto-run controller keeps waiting in the same round when step 2 has no available phone numbers', async () => {
+  const events = {
+    logs: [],
+    broadcasts: [],
+    accountRecords: [],
+    runCalls: 0,
+  };
+
+  let currentState = {
+    stepStatuses: {},
+    vpsUrl: 'https://example.com/vps',
+    vpsPassword: 'secret',
+    customPassword: '',
+    autoRunSkipFailures: false,
+    autoRunFallbackThreadIntervalMinutes: 0,
+    autoRunDelayEnabled: false,
+    autoRunDelayMinutes: 30,
+    autoStepDelaySeconds: null,
+    mailProvider: '163',
+    emailGenerator: 'duck',
+    gmailBaseEmail: '',
+    mail2925BaseEmail: '',
+    emailPrefix: 'demo',
+    inbucketHost: '',
+    inbucketMailbox: '',
+    cloudflareDomain: '',
+    cloudflareDomains: [],
+    tabRegistry: {},
+    sourceLastUrls: {},
+    autoRunRoundSummaries: [],
+  };
+
+  const runtime = {
+    state: {
+      autoRunActive: false,
+      autoRunCurrentRun: 0,
+      autoRunTotalRuns: 1,
+      autoRunAttemptRun: 0,
+      autoRunSessionId: 0,
+    },
+    get() {
+      return { ...this.state };
+    },
+    set(updates = {}) {
+      this.state = { ...this.state, ...updates };
+    },
+  };
+
+  let sessionSeed = 0;
+
+  const controller = api.createAutoRunController({
+    addLog: async (message, level = 'info') => {
+      events.logs.push({ message, level });
+    },
+    appendAccountRunRecord: async (status, _state, reason) => {
+      events.accountRecords.push({ status, reason });
+      return { status, reason };
+    },
+    AUTO_RUN_MAX_RETRIES_PER_ROUND: 3,
+    AUTO_RUN_RETRY_DELAY_MS: 3000,
+    AUTO_RUN_TIMER_KIND_BEFORE_RETRY: 'before_retry',
+    AUTO_RUN_TIMER_KIND_BETWEEN_ROUNDS: 'between_rounds',
+    broadcastAutoRunStatus: async (phase, payload = {}) => {
+      events.broadcasts.push({ phase, ...payload });
+      currentState = {
+        ...currentState,
+        autoRunning: ['scheduled', 'running', 'waiting_step', 'waiting_email', 'retrying', 'waiting_interval'].includes(phase),
+        autoRunPhase: phase,
+        autoRunCurrentRun: payload.currentRun ?? runtime.state.autoRunCurrentRun,
+        autoRunTotalRuns: payload.totalRuns ?? runtime.state.autoRunTotalRuns,
+        autoRunAttemptRun: payload.attemptRun ?? runtime.state.autoRunAttemptRun,
+        autoRunSessionId: payload.sessionId ?? runtime.state.autoRunSessionId,
+      };
+    },
+    broadcastStopToContentScripts: async () => {},
+    cancelPendingCommands: () => {},
+    clearStopRequest: () => {},
+    createAutoRunSessionId: () => {
+      sessionSeed += 1;
+      return sessionSeed;
+    },
+    getAutoRunStatusPayload: (phase, payload = {}) => ({
+      autoRunning: ['scheduled', 'running', 'waiting_step', 'waiting_email', 'retrying', 'waiting_interval'].includes(phase),
+      autoRunPhase: phase,
+      autoRunCurrentRun: payload.currentRun ?? 0,
+      autoRunTotalRuns: payload.totalRuns ?? 1,
+      autoRunAttemptRun: payload.attemptRun ?? 0,
+      autoRunSessionId: payload.sessionId ?? 0,
+    }),
+    getErrorMessage: (error) => error?.message || String(error || ''),
+    getFirstUnfinishedStep: () => 1,
+    getPendingAutoRunTimerPlan: () => null,
+    getRunningSteps: () => [],
+    getState: async () => ({
+      ...currentState,
+      stepStatuses: { ...(currentState.stepStatuses || {}) },
+      tabRegistry: { ...(currentState.tabRegistry || {}) },
+      sourceLastUrls: { ...(currentState.sourceLastUrls || {}) },
+    }),
+    getStopRequested: () => false,
+    hasSavedProgress: () => false,
+    isAddPhoneAuthFailure: () => false,
+    isRestartCurrentAttemptError: () => false,
+    isStopError: (error) => (error?.message || String(error || '')) === '流程已被用户停止。',
+    launchAutoRunTimerPlan: async () => false,
+    normalizeAutoRunFallbackThreadIntervalMinutes: (value) => Math.max(0, Math.floor(Number(value) || 0)),
+    persistAutoRunTimerPlan: async () => ({}),
+    resetState: async () => {
+      currentState = {
+        ...currentState,
+        stepStatuses: {},
+        tabRegistry: {},
+        sourceLastUrls: {},
+      };
+    },
+    runAutoSequenceFromStep: async () => {
+      events.runCalls += 1;
+      throw new Error('HeroSMS no numbers available across 2 country candidate(s): Brazil: NO_NUMBERS | Chile: NO_NUMBERS.');
+    },
+    runtime,
+    setState: async (updates = {}) => {
+      currentState = {
+        ...currentState,
+        ...updates,
+        stepStatuses: updates.stepStatuses ? { ...updates.stepStatuses } : currentState.stepStatuses,
+        tabRegistry: updates.tabRegistry ? { ...updates.tabRegistry } : currentState.tabRegistry,
+        sourceLastUrls: updates.sourceLastUrls ? { ...updates.sourceLastUrls } : currentState.sourceLastUrls,
+      };
+    },
+    sleepWithStop: async () => {
+      if (events.runCalls >= 2) {
+        throw new Error('流程已被用户停止。');
+      }
+    },
+    throwIfAutoRunSessionStopped: (sessionId) => {
+      if (sessionId && sessionId !== runtime.state.autoRunSessionId) {
+        throw new Error('流程已被用户停止。');
+      }
+    },
+    waitForRunningStepsToFinish: async () => currentState,
+    chrome: {
+      runtime: {
+        sendMessage() {
+          return Promise.resolve();
+        },
+      },
+    },
+  });
+
+  await controller.autoRunLoop(1, {
+    autoRunSkipFailures: false,
+    mode: 'restart',
+  });
+
+  assert.equal(events.runCalls, 2, 'same round should keep retrying phone acquisition until stopped');
+  assert.equal(events.accountRecords.some(({ status }) => status === 'failed'), false, 'no-number waiting should not immediately mark the round failed');
+  assert.equal(events.accountRecords.some(({ status }) => status === 'stopped'), true, 'manual stop should still be recorded once the wait loop is interrupted');
+  assert.equal(events.logs.some(({ message }) => /继续等待并重试获取号码/.test(message)), true);
+  assert.equal(events.logs.some(({ message }) => /自动等待：3 秒后继续当前轮拿号/.test(message)), true);
+});
+
 test('auto-run controller does not misclassify phone acquisition fetch failures as no-supply exhaustion', async () => {
   const events = {
     logs: [],

@@ -681,38 +681,35 @@
             }
 
             if (blockedByPhoneNoSupply) {
-              roundSummary.status = 'failed';
-              roundSummary.finalFailureReason = reason;
-              await setState({
-                autoRunRoundSummaries: serializeAutoRunRoundSummaries(totalRuns, roundSummaries),
-              });
-              await appendRoundRecordIfNeeded('failed', reason, err);
-              cancelPendingCommands('当前轮因接码号池暂无可用号码已终止。');
+              cancelPendingCommands('当前轮因接码号池暂无可用号码，准备继续等待新号。');
               await broadcastStopToContentScripts();
-              if (!autoRunSkipFailures) {
-                await addLog(
-                  `第 ${targetRun}/${totalRuns} 轮接码号池暂无可用号码，自动重试未开启，当前自动运行将停止。`,
-                  'warn'
-                );
-                stoppedEarly = true;
-                await broadcastAutoRunStatus('stopped', {
-                  currentRun: targetRun,
-                  totalRuns,
-                  attemptRun,
-                  sessionId: 0,
-                });
-                break;
-              }
-
-              await addLog(`第 ${targetRun}/${totalRuns} 轮接码号池暂无可用号码，本轮将直接失败并跳过剩余重试。`, 'warn');
               await addLog(
-                targetRun < totalRuns
-                  ? `第 ${targetRun}/${totalRuns} 轮因接码号池暂无可用号码提前结束，自动流程将继续下一轮。`
-                  : `第 ${targetRun}/${totalRuns} 轮因接码号池暂无可用号码提前结束，已无后续轮次，本次自动运行结束。`,
+                `第 ${targetRun}/${totalRuns} 轮接码号池暂无可用号码，当前轮将继续等待并重试获取号码，不结束自动运行。`,
                 'warn'
               );
-              forceFreshTabsNextRun = true;
-              break;
+              await addLog(
+                `自动等待：${Math.round(AUTO_RUN_RETRY_DELAY_MS / 1000)} 秒后继续当前轮拿号。`,
+                'warn'
+              );
+              try {
+                await sleepWithStop(AUTO_RUN_RETRY_DELAY_MS);
+              } catch (sleepError) {
+                if (isStopError(sleepError)) {
+                  stoppedEarly = true;
+                  await appendRoundRecordIfNeeded('stopped', getErrorMessage(sleepError), sleepError);
+                  await addLog(`第 ${targetRun}/${totalRuns} 轮已被用户停止`, 'warn');
+                  await broadcastAutoRunStatus('stopped', {
+                    currentRun: targetRun,
+                    totalRuns,
+                    attemptRun,
+                    sessionId: 0,
+                  });
+                  break;
+                }
+                throw sleepError;
+              }
+              reuseExistingProgress = false;
+              continue;
             }
 
             if (blockedByPlusNonFreeTrial) {
