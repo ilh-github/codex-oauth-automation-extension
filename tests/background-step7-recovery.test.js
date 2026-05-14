@@ -460,6 +460,77 @@ test('step 8 reruns step 7 with preserved phone login identity after add-email v
   assert.equal(calls.rerunStates[0].signupPhoneNumber, '+447780579093');
 });
 
+test('step 8 does not rerun step 7 when LuckMail token is missing but auth page is still on email verification', async () => {
+  const calls = {
+    resolveCalls: 0,
+    rerunStep7: 0,
+    ensureCalls: 0,
+  };
+
+  const executor = api.createStep8Executor({
+    addLog: async () => {},
+    chrome: {
+      tabs: {
+        update: async () => {},
+      },
+    },
+    CLOUDFLARE_TEMP_EMAIL_PROVIDER: 'cloudflare-temp-email',
+    confirmCustomVerificationStepBypass: async () => {},
+    ensureStep8VerificationPageReady: async () => {
+      calls.ensureCalls += 1;
+      return { state: 'verification_page', displayedEmail: 'jonlabadiewyt@outlook.com' };
+    },
+    getOAuthFlowRemainingMs: async () => 8000,
+    getOAuthFlowStepTimeoutMs: async (defaultTimeoutMs) => Math.min(defaultTimeoutMs, 8000),
+    getMailConfig: () => ({
+      provider: 'luckmail-api',
+      label: 'LuckMail（API 购邮）',
+      source: 'luckmail-api',
+      url: 'https://mails.luckyous.com',
+      navigateOnReuse: false,
+    }),
+    getState: async () => ({
+      visibleStep: 8,
+      email: 'jonlabadiewyt@outlook.com',
+      password: 'secret',
+      oauthUrl: 'https://oauth.example/latest',
+      currentLuckmailPurchase: null,
+    }),
+    getTabId: async () => 1,
+    HOTMAIL_PROVIDER: 'hotmail-api',
+    isTabAlive: async () => true,
+    isVerificationMailPollingError: () => false,
+    LUCKMAIL_PROVIDER: 'luckmail-api',
+    resolveVerificationStep: async () => {
+      calls.resolveCalls += 1;
+      if (calls.resolveCalls === 1) {
+        throw new Error('LuckMail 当前没有可用 token，请先执行步骤 3 购买邮箱。');
+      }
+      return {};
+    },
+    rerunStep7ForStep8Recovery: async () => {
+      calls.rerunStep7 += 1;
+    },
+    reuseOrCreateTab: async () => {},
+    setState: async () => {},
+    shouldUseCustomRegistrationEmail: () => false,
+    STANDARD_MAIL_VERIFICATION_RESEND_INTERVAL_MS: 25000,
+    STEP7_MAIL_POLLING_RECOVERY_MAX_ATTEMPTS: 3,
+    throwIfStopped: () => {},
+  });
+
+  await executor.executeStep8({
+    visibleStep: 8,
+    email: 'jonlabadiewyt@outlook.com',
+    password: 'secret',
+    oauthUrl: 'https://oauth.example/latest',
+  });
+
+  assert.equal(calls.resolveCalls, 2);
+  assert.equal(calls.rerunStep7, 0);
+  assert.equal(calls.ensureCalls >= 2, true);
+});
+
 test('step 8 email_in_use recovery preserves the previous registration baseline', async () => {
   const calls = {
     contentCalls: 0,

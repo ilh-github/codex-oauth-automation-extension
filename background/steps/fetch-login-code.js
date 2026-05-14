@@ -326,6 +326,11 @@
       return { outcome: 'restart_step7' };
     }
 
+    function isLuckmailTokenMissingError(error) {
+      const message = String(error?.message || error || '').trim();
+      return /LuckMail 当前没有可用 token/i.test(message);
+    }
+
     function getExpectedMail2925MailboxEmail(state = {}) {
       if (Boolean(state?.mail2925UseAccountPool)) {
         const currentAccountId = String(state?.currentMail2925AccountId || '').trim();
@@ -616,7 +621,19 @@
               currentError = recovery.error;
             }
           }
-          if (!isVerificationMailPollingError(currentError) && !isStep8RestartStep7Error(currentError)) {
+          if (isLuckmailTokenMissingError(currentError)) {
+            const recovery = await recoverStep8PollingFailure(currentState, visibleStep);
+            if (recovery?.outcome === 'completed') {
+              return;
+            }
+            if (recovery?.outcome === 'retry_without_step7') {
+              retryWithoutStep7 = true;
+            }
+            if (recovery?.error) {
+              currentError = recovery.error;
+            }
+          }
+          if (!isVerificationMailPollingError(currentError) && !isStep8RestartStep7Error(currentError) && !isLuckmailTokenMissingError(currentError)) {
             throw currentError;
           }
 

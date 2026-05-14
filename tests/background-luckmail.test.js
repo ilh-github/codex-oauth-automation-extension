@@ -584,6 +584,115 @@ return {
   assert.equal(snapshot.tokenCodeCalls, 2);
 });
 
+test('pollLuckmailVerificationCode falls back to mails api when /code has no inline verification payload yet', async () => {
+  const bundle = extractFunction('pollLuckmailVerificationCode');
+
+  const factory = new Function(`
+let currentState = {
+  currentLuckmailPurchase: {
+    id: 8,
+    email_address: 'luck@example.com',
+    token: 'tok-fallback',
+  },
+  currentLuckmailMailCursor: {
+    messageId: 'old-mail',
+    receivedAt: '2026-04-14 13:31:15',
+  },
+};
+const cursorWrites = [];
+
+function getCurrentLuckmailPurchase(state) {
+  return state.currentLuckmailPurchase;
+}
+function createLuckmailClient() {
+  return {
+    user: {
+      async getTokenCode() {
+        return {
+          has_new_mail: true,
+          verification_code: '',
+          mail: null,
+          email_address: 'luck@example.com',
+        };
+      },
+      async getTokenMails() {
+        return {
+          mails: [
+            { message_id: 'new-mail', received_at: '2026-04-14 13:32:05' },
+            { message_id: 'old-mail', received_at: '2026-04-14 13:31:15' },
+          ],
+        };
+      },
+      async getTokenMailDetail(_token, messageId) {
+        return {
+          message_id: messageId,
+          received_at: '2026-04-14 13:32:05',
+          verification_code: '333444',
+        };
+      },
+    },
+  };
+}
+async function getState() {
+  return currentState;
+}
+function normalizeLuckmailMailCursor(cursor) {
+  return {
+    messageId: cursor?.messageId || cursor?.message_id || '',
+    receivedAt: cursor?.receivedAt || cursor?.received_at || '',
+  };
+}
+function isLuckmailMailNewerThanCursor(mail, cursor) {
+  if (!cursor?.messageId && !cursor?.receivedAt) return true;
+  if (mail.message_id === cursor.messageId) return false;
+  return Date.parse(String(mail.received_at).replace(' ', 'T') + 'Z') > Date.parse(String(cursor.receivedAt).replace(' ', 'T') + 'Z');
+}
+function normalizeLuckmailTimestamp(value) {
+  return Date.parse(String(value || '').replace(' ', 'T') + 'Z') || 0;
+}
+function buildLuckmailMailCursor(mail) {
+  return { messageId: mail.message_id || '', receivedAt: mail.received_at || '' };
+}
+async function setLuckmailMailCursorState(cursor) {
+  currentState = { ...currentState, currentLuckmailMailCursor: cursor };
+  cursorWrites.push(cursor);
+}
+async function resolveLuckmailVerificationMail(client, token, filters = {}) {
+  const mailList = await client.user.getTokenMails(token);
+  const mail = (mailList.mails || [])[0] || null;
+  if (!mail) return null;
+  const detail = await client.user.getTokenMailDetail(token, mail.message_id);
+  return { mail: detail, code: detail.verification_code };
+}
+async function addLog() {}
+function throwIfStopped() {}
+function isStopError() { return false; }
+async function sleepWithStop() {}
+
+${bundle}
+
+return {
+  pollLuckmailVerificationCode,
+  snapshot() {
+    return { currentState, cursorWrites };
+  },
+};
+`);
+
+  const api = factory();
+  const result = await api.pollLuckmailVerificationCode(8, await api.snapshot().currentState, {
+    maxAttempts: 1,
+    intervalMs: 1000,
+    excludeCodes: [],
+  });
+
+  assert.equal(result.code, '333444');
+  assert.deepStrictEqual(api.snapshot().cursorWrites.at(-1), {
+    messageId: 'new-mail',
+    receivedAt: '2026-04-14 13:32:05',
+  });
+});
+
 test('buildPersistentSettingsPayload keeps LuckMail config fields for storage.local persistence', () => {
   const bundle = [
     extractFunction('normalizePersistentSettingValue'),

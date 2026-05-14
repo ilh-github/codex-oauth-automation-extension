@@ -5589,7 +5589,25 @@ async function pollLuckmailVerificationCode(step, state, pollPayload = {}) {
       const cursor = normalizeLuckmailMailCursor((await getState()).currentLuckmailMailCursor);
 
       if (!code || !tokenMail) {
-        lastError = new Error(`步骤 ${step}：LuckMail /code 接口暂未返回新的验证码。`);
+        const fallbackMatch = await resolveLuckmailVerificationMail(client, purchase.token, {
+          ...pollPayload,
+          excludeCodes: Array.from(excludedCodes),
+        }, tokenCode).catch(() => null);
+        if (fallbackMatch?.mail && fallbackMatch?.code) {
+          if (!isLuckmailMailNewerThanCursor(fallbackMatch.mail, cursor)) {
+            lastError = new Error(`步骤 ${step}：LuckMail 邮件列表命中的最新邮件仍是旧验证码。`);
+          } else {
+            await setLuckmailMailCursorState(buildLuckmailMailCursor(fallbackMatch.mail));
+            return {
+              ok: true,
+              code: fallbackMatch.code,
+              emailTimestamp: normalizeLuckmailTimestamp(fallbackMatch.mail.received_at) || Date.now(),
+              mailId: fallbackMatch.mail.message_id,
+            };
+          }
+        } else {
+          lastError = new Error(`步骤 ${step}：LuckMail /code 接口暂未返回新的验证码。`);
+        }
       } else if (excludedCodes.has(code)) {
         lastError = new Error(`步骤 ${step}：LuckMail 返回的验证码 ${code} 已试过，等待 15 秒后再次轮询。`);
       } else if (!isLuckmailMailNewerThanCursor(tokenMail, cursor)) {
