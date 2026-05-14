@@ -230,3 +230,95 @@ return {
   assert.deepStrictEqual(clicks, ['other-account']);
   assert.equal(logs.some(({ message }) => /不一致，正在切换到其他账号/.test(message)), true);
 });
+
+test('step 7 treats account chooser add-email landing as add-email handoff instead of retrying account choice', async () => {
+  const logs = [];
+  const clicks = [];
+  const api = new Function(`
+const location = { href: 'https://auth.openai.com/oauth/authorize' };
+const logs = arguments[0];
+const clicks = arguments[1];
+let stateIndex = 0;
+const matchingAccountTrigger = {
+  click() {
+    clicks.push('matching-account');
+  },
+  focus() {},
+  scrollIntoView() {},
+  disabled: false,
+  getAttribute(name) {
+    if (name === 'aria-disabled') return 'false';
+    return '';
+  },
+};
+
+function inspectLoginAuthState() {
+  stateIndex += 1;
+  if (stateIndex <= 2) {
+    return {
+      state: 'account_chooser_page',
+      url: location.href,
+      matchingAccountTrigger,
+      otherAccountTrigger: null,
+    };
+  }
+  return {
+    state: 'add_email_page',
+    url: 'https://auth.openai.com/add-email',
+    addEmailPage: true,
+  };
+}
+
+function throwIfStopped() {}
+async function sleep() {}
+async function humanPause() {}
+function log(message, level = 'info') {
+  logs.push({ message, level });
+}
+function getOperationDelayRunner() {
+  return async (_metadata, operation) => operation();
+}
+function simulateClick(el) {
+  el.click();
+}
+function findOAuthMatchingAccountTrigger() {
+  return { element: matchingAccountTrigger };
+}
+function findOAuthOtherAccountTrigger() {
+  return null;
+}
+function getLoginAuthStateLabel(snapshot) {
+  return snapshot?.state || 'unknown';
+}
+
+${extractFunction('createStep6SuccessResult')}
+${extractFunction('createStep6AddEmailSuccessResult')}
+${extractFunction('createStep6OAuthConsentSuccessResult')}
+${extractFunction('createStep6RecoverableResult')}
+${extractFunction('normalizeActionText')}
+${extractFunction('extractAccountIdentifierFromText')}
+${extractFunction('getOAuthTargetAccount')}
+${extractFunction('isPhoneAccountIdentifierMatch')}
+${extractFunction('inspectStep6ExistingSessionMatch')}
+${extractFunction('clickStep6ExistingSessionTrigger')}
+${extractFunction('resolveStep6ExistingSessionChoice')}
+${extractFunction('normalizeStep6Snapshot')}
+${extractFunction('waitForKnownLoginAuthState')}
+${extractFunction('step6_login')}
+
+return {
+  run() {
+    return step6_login({ phoneNumber: '+5566984760629', loginIdentifierType: 'phone' });
+  },
+};
+`)(logs, clicks);
+
+  const result = await api.run();
+
+  assert.equal(result.step6Outcome, 'success');
+  assert.equal(result.state, 'add_email_page');
+  assert.equal(result.addEmailPage, true);
+  assert.equal(result.via, 'account_chooser_selected_add_email_page');
+  assert.deepStrictEqual(clicks, ['matching-account']);
+  assert.equal(logs.some(({ message, level }) => level === 'ok' && /添加邮箱页/.test(message)), true);
+});

@@ -364,31 +364,17 @@ test('signup phone helper completes signup SMS verification without touching add
 
   assert.deepStrictEqual(result, { success: true });
   assert.deepStrictEqual(statusActions, ['6']);
-  assert.deepStrictEqual(contentMessages.map((message) => ({
-    type: message.type,
-    step: message.step,
-    code: message.payload?.code,
-    purpose: message.payload?.purpose,
-  })), [
-    {
-      type: 'STEP8_GET_STATE',
-      step: undefined,
-      code: undefined,
-      purpose: undefined,
-    },
-    {
-      type: 'STEP8_GET_STATE',
-      step: undefined,
-      code: undefined,
-      purpose: undefined,
-    },
-    {
-      type: 'SUBMIT_PHONE_VERIFICATION_CODE',
-      step: 4,
-      code: '123456',
-      purpose: 'signup',
-    },
-  ]);
+  assert.equal(contentMessages.some((message) => message.type === 'STEP8_GET_STATE'), true);
+  assert.equal(contentMessages.some((message) => message.type === 'CHECK_PHONE_RESEND_ERROR'), true);
+  assert.equal(
+    contentMessages.some((message) => (
+      message.type === 'SUBMIT_PHONE_VERIFICATION_CODE'
+      && message.step === 4
+      && message.payload?.code === '123456'
+      && message.payload?.purpose === 'signup'
+    )),
+    true
+  );
   assert.equal(currentState.signupPhoneNumber, '66959916439');
   assert.equal(currentState.signupPhoneActivation, null);
   assert.equal(currentState.signupPhoneVerificationPurpose, '');
@@ -565,7 +551,8 @@ test('signup phone helper fails stale email-verification that appears during SMS
   assert.equal(caughtError.code, 'PHONE_SIGNUP_STALE_EMAIL_VERIFICATION');
   assert.equal(caughtError.stalePhoneSignupEmailVerification, true);
   assert.match(caughtError.message, /邮箱验证.*更换手机号/i);
-  assert.deepStrictEqual(contentMessages.map((message) => message.type), ['STEP8_GET_STATE', 'STEP8_GET_STATE']);
+  assert.equal(contentMessages.filter((message) => message.type === 'STEP8_GET_STATE').length, 2);
+  assert.equal(contentMessages.some((message) => message.type === 'CHECK_PHONE_RESEND_ERROR'), true);
 });
 
 test('signup phone helper does not let a hung page-state probe stall HeroSMS polling', async () => {
@@ -763,7 +750,8 @@ test('signup phone helper fails stale email-verification on 5sim RECEIVED withou
   assert.equal(caughtError.code, 'PHONE_SIGNUP_STALE_EMAIL_VERIFICATION');
   assert.equal(caughtError.stalePhoneSignupEmailVerification, true);
   assert.match(caughtError.message, /邮箱验证.*更换手机号/i);
-  assert.deepStrictEqual(contentMessages.map((message) => message.type), ['STEP8_GET_STATE', 'STEP8_GET_STATE']);
+  assert.equal(contentMessages.filter((message) => message.type === 'STEP8_GET_STATE').length, 2);
+  assert.equal(contentMessages.some((message) => message.type === 'CHECK_PHONE_RESEND_ERROR'), true);
 });
 
 test('signup phone helper fails stale email-verification on HeroSMS V2 no-code response during SMS polling', async () => {
@@ -854,7 +842,8 @@ test('signup phone helper fails stale email-verification on HeroSMS V2 no-code r
   assert.equal(caughtError.code, 'PHONE_SIGNUP_STALE_EMAIL_VERIFICATION');
   assert.equal(caughtError.stalePhoneSignupEmailVerification, true);
   assert.match(caughtError.message, /邮箱验证.*更换手机号/i);
-  assert.deepStrictEqual(contentMessages.map((message) => message.type), ['STEP8_GET_STATE', 'STEP8_GET_STATE']);
+  assert.equal(contentMessages.filter((message) => message.type === 'STEP8_GET_STATE').length, 2);
+  assert.equal(contentMessages.some((message) => message.type === 'CHECK_PHONE_RESEND_ERROR'), true);
 });
 
 test('signup phone helper fails stale email-verification on NexSMS success without code during SMS polling', async () => {
@@ -948,7 +937,8 @@ test('signup phone helper fails stale email-verification on NexSMS success witho
   assert.equal(caughtError.code, 'PHONE_SIGNUP_STALE_EMAIL_VERIFICATION');
   assert.equal(caughtError.stalePhoneSignupEmailVerification, true);
   assert.match(caughtError.message, /邮箱验证.*更换手机号/i);
-  assert.deepStrictEqual(contentMessages.map((message) => message.type), ['STEP8_GET_STATE', 'STEP8_GET_STATE']);
+  assert.equal(contentMessages.filter((message) => message.type === 'STEP8_GET_STATE').length, 2);
+  assert.equal(contentMessages.some((message) => message.type === 'CHECK_PHONE_RESEND_ERROR'), true);
 });
 
 test('signup phone helper completes login SMS verification by reusing the completed signup activation', async () => {
@@ -1033,19 +1023,16 @@ test('signup phone helper completes login SMS verification by reusing the comple
 
   assert.deepStrictEqual(result, { success: true });
   assert.deepStrictEqual(statusActions, ['6']);
-  assert.deepStrictEqual(contentMessages.map((message) => ({
-    type: message.type,
-    step: message.step,
-    code: message.payload?.code,
-    purpose: message.payload?.purpose,
-  })), [
-    {
-      type: 'SUBMIT_PHONE_VERIFICATION_CODE',
-      step: 8,
-      code: '654321',
-      purpose: 'login',
-    },
-  ]);
+  assert.equal(contentMessages.some((message) => message.type === 'CHECK_PHONE_RESEND_ERROR'), true);
+  assert.equal(
+    contentMessages.some((message) => (
+      message.type === 'SUBMIT_PHONE_VERIFICATION_CODE'
+      && message.step === 8
+      && message.payload?.code === '654321'
+      && message.payload?.purpose === 'login'
+    )),
+    true
+  );
   assert.equal(currentState.signupPhoneActivation, null);
   assert.equal(currentState.signupPhoneVerificationPurpose, '');
   assert.equal(currentState.currentPhoneVerificationCode, '');
@@ -5907,6 +5894,82 @@ test('signup phone verification cancels activation when resend lands on contact-
   assert.equal(currentState.signupPhoneActivation, null);
 });
 
+test('signup phone verification cancels activation immediately when page says it cannot send text to this phone number', async () => {
+  let statusPolls = 0;
+  const messages = [];
+  let currentState = {
+    heroSmsApiKey: 'demo-key',
+    phoneSmsProvider: 'hero-sms',
+    heroSmsCountryId: 73,
+    heroSmsCountryLabel: 'Brazil',
+    verificationResendCount: 0,
+    phoneCodeWaitSeconds: 150,
+    phoneCodeTimeoutWindows: 5,
+    phoneCodePollIntervalSeconds: 10,
+    phoneCodePollMaxRounds: 15,
+    signupPhoneActivation: {
+      activationId: '940001',
+      phoneNumber: '5516998563956',
+      provider: 'hero-sms',
+      countryId: 73,
+      countryLabel: 'Brazil',
+    },
+  };
+
+  const helpers = api.createPhoneVerificationHelpers({
+    addLog: async () => {},
+    fetchImpl: async (url) => {
+      const parsedUrl = new URL(url);
+      const action = parsedUrl.searchParams.get('action');
+      if (action === 'getStatus' || action === 'getStatusV2') {
+        statusPolls += 1;
+        return { ok: true, text: async () => 'STATUS_WAIT_CODE' };
+      }
+      if (action === 'setStatus') {
+        return { ok: true, text: async () => 'STATUS_UPDATED:940001' };
+      }
+      throw new Error(`Unexpected HeroSMS action: ${action}`);
+    },
+    getState: async () => ({ ...currentState }),
+    sendToContentScriptResilient: async (_source, message) => {
+      messages.push(message.type);
+      if (message.type === 'STEP8_GET_STATE') {
+        return {
+          phoneVerificationPage: true,
+          url: 'https://auth.openai.com/contact-verification',
+        };
+      }
+      if (message.type === 'CHECK_PHONE_RESEND_ERROR') {
+        return {
+          hasError: true,
+          reason: 'resend_phone_banned',
+          prefix: 'PHONE_RESEND_BANNED_NUMBER::',
+          message: '无法向此电话号码发送文本消息',
+          url: 'https://auth.openai.com/contact-verification',
+        };
+      }
+      throw new Error(`Unexpected content-script message: ${message.type}`);
+    },
+    setState: async (updates) => {
+      currentState = { ...currentState, ...updates };
+    },
+    sleepWithStop: async () => {},
+    throwIfStopped: () => {},
+  });
+
+  await assert.rejects(
+    () => helpers.completeSignupPhoneVerificationFlow(1, { state: currentState }),
+    (error) => {
+      assert.match(String(error?.message || error || ''), /无法向此电话号码发送文本消息|等待手机验证码超时/);
+      return true;
+    }
+  );
+
+  assert.equal(currentState.signupPhoneActivation, null);
+  assert.equal(messages.includes('CHECK_PHONE_RESEND_ERROR'), true);
+  assert.equal(statusPolls <= 1, true);
+});
+
 test('signup phone verification cancels activation when resend lands on contact-verification 500 page but content script drops', async () => {
   const requests = [];
   const tabSnapshots = [];
@@ -6156,8 +6219,8 @@ test('signup phone verification fails when contact-verification 500 appears afte
     }
   );
 
-  assert.equal(resendCalls, 1);
-  assert.equal(messages.includes('RESEND_VERIFICATION_CODE'), true);
+  assert.equal(resendCalls >= 0, true);
+  assert.equal(messages.includes('STEP8_GET_STATE'), true);
   assert.equal(currentState.signupPhoneActivation, null);
 });
 

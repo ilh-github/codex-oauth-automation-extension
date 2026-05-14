@@ -4657,6 +4657,12 @@ async function resolveStep6ExistingSessionChoice(payload = {}, snapshot = null, 
           via: 'account_chooser_selected_oauth_consent_page',
         });
       }
+      if (nextSnapshot.state === 'add_email_page') {
+        log('账号选择后进入添加邮箱页，登录阶段完成，交由步骤 8 填写邮箱。', 'ok', { step: visibleStep, stepKey: 'oauth-login' });
+        return createStep6AddEmailSuccessResult(nextSnapshot, {
+          via: 'account_chooser_selected_add_email_page',
+        });
+      }
       if (nextSnapshot.state === 'verification_page' || nextSnapshot.state === 'phone_verification_page') {
         return finalizeStep6VerificationReady({
           visibleStep,
@@ -4691,6 +4697,12 @@ async function resolveStep6ExistingSessionChoice(payload = {}, snapshot = null, 
       }
       if (nextSnapshot.state === 'password_page') {
         return step6LoginFromPasswordPage(payload, nextSnapshot);
+      }
+      if (nextSnapshot.state === 'add_email_page') {
+        log('切换账号后进入添加邮箱页，登录阶段完成，交由步骤 8 填写邮箱。', 'ok', { step: visibleStep, stepKey: 'oauth-login' });
+        return createStep6AddEmailSuccessResult(nextSnapshot, {
+          via: 'account_chooser_other_account_add_email_page',
+        });
       }
       return createStep6RecoverableResult('account_chooser_switch_unknown', nextSnapshot, {
         message: `点击“其他账号”后未进入可识别的登录页面，当前状态：${getLoginAuthStateLabel(nextSnapshot)}。`,
@@ -4736,6 +4748,12 @@ async function resolveStep6ExistingSessionChoice(payload = {}, snapshot = null, 
     }
     if (nextSnapshot.state === 'password_page') {
       return step6LoginFromPasswordPage(payload, nextSnapshot);
+    }
+    if (nextSnapshot.state === 'add_email_page') {
+      log('切换账号后进入添加邮箱页，登录阶段完成，交由步骤 8 填写邮箱。', 'ok', { step: visibleStep, stepKey: 'oauth-login' });
+      return createStep6AddEmailSuccessResult(nextSnapshot, {
+        via: 'oauth_consent_switch_add_email_page',
+      });
     }
 
     return createStep6RecoverableResult('oauth_consent_switch_unknown', nextSnapshot, {

@@ -1465,6 +1465,31 @@
       }
     }
 
+    async function throwPhonePageImmediateErrorIfPresent(tabId, state = {}, options = {}) {
+      const visibleStep = normalizeLogStep(options?.visibleStep || options?.step) || activePhoneVerificationLogStep || 9;
+      const pageError = await checkPhoneResendPageError(tabId, state);
+      if (!pageError?.hasError) {
+        await throwPhoneResendServerErrorIfAuthTabShowsIt(tabId);
+        return;
+      }
+      if (pageError.reason === 'resend_phone_banned') {
+        throw new Error(`${PHONE_RESEND_BANNED_NUMBER_ERROR_PREFIX}${pageError.message || 'OpenAI could not send SMS to this phone number.'}`);
+      }
+      if (pageError.reason === 'resend_throttled') {
+        throw new Error(`${PHONE_RESEND_THROTTLED_ERROR_PREFIX}${pageError.message || 'OpenAI resend is throttled.'}`);
+      }
+      if (pageError.reason === 'resend_server_error') {
+        throw buildPhoneResendServerError(pageError.message);
+      }
+      if (pageError.reason === 'phone_max_usage_exceeded') {
+        throw buildPhoneMaxUsageExceededError(pageError.message);
+      }
+      await addLog(`步骤 ${visibleStep}：检测到手机号验证页面异常：${pageError.message || pageError.reason}`, 'warn', {
+        step: visibleStep,
+        stepKey: visibleStep === 4 ? 'fetch-signup-code' : 'fetch-login-code',
+      });
+    }
+
     function shouldTreatResendThrottledAsBanned(state = {}) {
       return Boolean(state?.phoneResendThrottledAsBannedEnabled);
     }
@@ -4419,6 +4444,9 @@
     }
 
     function usePageProbeForPhoneResend(state = {}) {
+      if (activePhoneVerificationLogStep === 4) {
+        return true;
+      }
       const provider = normalizePhoneSmsProvider(state?.phoneSmsProvider || DEFAULT_PHONE_SMS_PROVIDER);
       return provider === PHONE_SMS_PROVIDER_HERO || provider === PHONE_SMS_PROVIDER_NEXSMS || provider === PHONE_SMS_PROVIDER_5SIM;
     }
@@ -5482,9 +5510,17 @@
             if (isSignupEmailVerificationPageState(pageState)) {
               throw buildSignupPhoneStaleEmailVerificationError(pageState);
             }
+            await throwPhonePageImmediateErrorIfPresent(tabId, state, { step: 4 });
             return pageState;
           } catch (error) {
-            if (isStopRequestedError(error) || isStaleSignupPhoneEmailVerificationError(error)) {
+            if (
+              isStopRequestedError(error)
+              || isStaleSignupPhoneEmailVerificationError(error)
+              || isPhoneResendBannedNumberError(error)
+              || isPhoneResendThrottledError(error)
+              || isPhoneResendServerError(error)
+              || isPhoneMaxUsageExceededFlowError(error)
+            ) {
               throw error;
             }
             await throwPhoneResendServerErrorIfAuthTabShowsIt(tabId);
@@ -5509,6 +5545,7 @@
             const code = await waitForSignupPhoneCode(state, activation, {
               onPollStatus: async () => {
                 await assertSignupPhoneStillApplicable('while waiting for SMS code');
+                await throwPhonePageImmediateErrorIfPresent(tabId, state, { step: 4 });
               },
               onTimeoutWindow: async () => {
                 try {
@@ -5755,8 +5792,12 @@
           for (let attempt = 1; attempt <= DEFAULT_PHONE_SUBMIT_ATTEMPTS; attempt += 1) {
             throwIfStopped();
             state = await getState();
+            await throwPhonePageImmediateErrorIfPresent(tabId, state, { step: visibleStep });
             const code = await waitForLoginPhoneCode(state, activation, {
               visibleStep,
+              onPollStatus: async () => {
+                await throwPhonePageImmediateErrorIfPresent(tabId, state, { step: visibleStep });
+              },
               onTimeoutWindow: async () => {
                 try {
                   await resendLoginPhoneVerificationCode(tabId, { visibleStep });
